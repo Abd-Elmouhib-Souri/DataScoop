@@ -1,1 +1,8 @@
+# Models are stored with Git LFS (git lfs pull after cloning)
 *.h5 filter=lfs diff=lfs merge=lfs -text
+# Binary files: never convert line endings or diff as text
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.ico binary
