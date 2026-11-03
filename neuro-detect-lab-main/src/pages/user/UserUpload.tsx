@@ -28,6 +28,7 @@ const UserUpload = () => {
       await queryClient.invalidateQueries({ queryKey: ["history", user?.token] });
       toast.success("Analyse terminee.");
     } catch (error: any) {
+      setResult(null); // never leave an old result on screen after a failed analysis
       const msg = error?.response?.data?.message ?? "Echec de l'analyse. Veuillez reessayer.";
       toast.error(msg);
     } finally {

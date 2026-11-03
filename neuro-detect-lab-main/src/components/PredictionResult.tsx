@@ -85,6 +85,8 @@ const MODEL_BADGES: Record<string, string> = {
   EfficientNetB4: "B4",
   AlzheimerCNN: "CNN",
   UltraBestModel: "ULTRA",
+  ResNet50: "RESNET",
+  CustomCNN: "CNN",
 };
 
 const RANK_LABELS = ["1", "2", "3", "4", "5"];

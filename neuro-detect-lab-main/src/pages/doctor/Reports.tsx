@@ -14,7 +14,7 @@ import MedicalChatbotPanel from "@/components/MedicalChatbotPanel";
 import EmptyState from "@/components/ui/empty-state";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getDoctors, getPatientsByDoctor, getPatients, getPatientIrmImage, reanalyzePatientScan, repairPatientLinks } from "@/lib/api";
+import { getDoctors, getPatientsByDoctor, getPatients, getPatientIrmImage, reanalyzePatientScan } from "@/lib/api";
 import type { PatientIrmData } from "@/lib/api";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
@@ -124,6 +124,7 @@ const getTopProbability = (probabilities?: Record<string, number>) => {
   return Object.entries(probabilities).sort((a, b) => b[1] - a[1])[0] ?? null;
 };
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const DERIVED_MODEL_ORDER = [
   "EfficientNetB4",
   "UltraBestModel",
@@ -155,81 +156,18 @@ const deriveModelComparison = (
     };
   }
 
-  const topProbability = getTopProbability(probs);
-  const baseConfidence = topProbability?.[1] ?? 0;
-  const resolvedPrediction = prediction ?? topProbability?.[0] ?? "Non Demented";
-  const variants = [
-    { name: "EfficientNetB4", confidenceOffset: 0.04, time: 132, description: "Comparaison reconstituee a partir du score global enregistre" },
-    { name: "UltraBestModel", confidenceOffset: 0.035, time: 126, description: "Comparaison reconstituee a partir du score global enregistre" },
-    { name: "EfficientNetB3", confidenceOffset: 0.03, time: 118, description: "Comparaison reconstituee a partir du score global enregistre" },
-    { name: "EfficientNetB0", confidenceOffset: 0.01, time: 96, description: "Comparaison reconstituee a partir du score global enregistre" },
-    { name: "AlzheimerCNN", confidenceOffset: -0.02, time: 104, description: "Comparaison reconstituee a partir du score global enregistre" },
-  ] as const;
-
-  const allModels = variants.reduce<Record<string, PatientModelResult>>((acc, variant) => {
-    const confidence = Math.max(0, Math.min(0.999, baseConfidence + variant.confidenceOffset));
-    acc[variant.name] = {
-      prediction: resolvedPrediction,
-      confidence: Number(confidence.toFixed(4)),
-      probabilities: probs,
-      inference_time_ms: variant.time,
-      mode: "simulated",
-      description: variant.description,
-    };
-    return acc;
-  }, {});
-
-  const rankedModels = [...DERIVED_MODEL_ORDER].sort(
-    (a, b) => (allModels[b]?.confidence ?? 0) - (allModels[a]?.confidence ?? 0)
-  );
-
-  return {
-    allModels,
-    rankedModels,
-    bestModel: rankedModels[0] ?? null,
-    totalModels: rankedModels.length,
-    isDerived: true,
-  };
+  // Per-model scores that were not stored are NOT reconstructed (the old code invented 5 models
+  // from the global score). Only real stored results (patient.allModels) are displayed.
+  void prediction;
+  return { allModels: {}, rankedModels: [], bestModel: null, totalModels: 0, isDerived: false };
 };
 
+// The old "indicative heatmap" was 3 ellipses at fixed positions, unrelated to the image.
+// Disabled until a real Grad-CAM is implemented. Returning null hides every heatmap block.
 const buildIndicativeHeatmapUrl = (
-  probabilities?: Record<string, number>,
-  prediction?: string | null
-) => {
-  const topEntries = Object.entries(probabilities ?? {})
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3);
-
-  if (topEntries.length === 0) return null;
-
-  const accent = PREDICTION_COLORS[prediction ?? topEntries[0][0] ?? ""] ?? "#ef4444";
-  const intensity = Math.min(0.95, 0.35 + (topEntries[0]?.[1] ?? 0) * 0.7);
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 420">
-      <defs>
-        <radialGradient id="g1">
-          <stop offset="0%" stop-color="${accent}" stop-opacity="${intensity}" />
-          <stop offset="100%" stop-color="${accent}" stop-opacity="0" />
-        </radialGradient>
-        <radialGradient id="g2">
-          <stop offset="0%" stop-color="#f59e0b" stop-opacity="${Math.max(0.2, (topEntries[1]?.[1] ?? 0.18))}" />
-          <stop offset="100%" stop-color="#f59e0b" stop-opacity="0" />
-        </radialGradient>
-        <radialGradient id="g3">
-          <stop offset="0%" stop-color="#38bdf8" stop-opacity="${Math.max(0.16, (topEntries[2]?.[1] ?? 0.12))}" />
-          <stop offset="100%" stop-color="#38bdf8" stop-opacity="0" />
-        </radialGradient>
-      </defs>
-      <rect width="420" height="420" fill="#020617" />
-      <ellipse cx="205" cy="125" rx="110" ry="80" fill="url(#g1)" />
-      <ellipse cx="155" cy="245" rx="90" ry="72" fill="url(#g2)" />
-      <ellipse cx="280" cy="250" rx="84" ry="70" fill="url(#g3)" />
-      <circle cx="208" cy="205" r="20" fill="rgba(255,255,255,0.12)" />
-    </svg>
-  `.trim();
-
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-};
+  _probabilities?: Record<string, number>,
+  _prediction?: string | null
+): string | null => null;
 
 const getPatientScoreDelta = (patient: Patient) => {
   const history = patient.medicalHistory?.filter((item) => item.bestModel || item.probabilities) ?? [];
@@ -253,54 +191,54 @@ const repairMojibake = (value: string): string => {
   if (!/[ÃÂâð]/.test(value)) return value;
 
   const replacements: Array<[string, string]> = [
-    ["dÃ©", "dé"],
-    ["DÃ©", "Dé"],
-    ["mÃ©", "mé"],
-    ["MÃ©", "Mé"],
-    ["cÃ©", "cé"],
-    ["CÃ©", "Cé"],
-    ["rÃ©", "ré"],
-    ["RÃ©", "Ré"],
-    ["Ã©", "é"],
-    ["Ã¨", "è"],
-    ["Ãª", "ê"],
-    ["Ã«", "ë"],
+    ["dé", "dé"],
+    ["Dé", "Dé"],
+    ["mé", "mé"],
+    ["Mé", "Mé"],
+    ["cé", "cé"],
+    ["Cé", "Cé"],
+    ["ré", "ré"],
+    ["Ré", "Ré"],
+    ["é", "é"],
+    ["è", "è"],
+    ["ê", "ê"],
+    ["ë", "ë"],
     ["Ã ", "à "],
-    ["Ã ", "à"],
-    ["Ã¢", "â"],
-    ["Ã®", "î"],
-    ["Ã¯", "ï"],
-    ["Ã´", "ô"],
-    ["Ã¶", "ö"],
-    ["Ã¹", "ù"],
-    ["Ã»", "û"],
-    ["Ã¼", "ü"],
-    ["Ã§", "ç"],
-    ["Ã‰", "É"],
-    ["Ã€", "À"],
-    ["Ã‡", "Ç"],
+    ["à", "à"],
+    ["â", "â"],
+    ["î", "î"],
+    ["ï", "ï"],
+    ["ô", "ô"],
+    ["ö", "ö"],
+    ["ù", "ù"],
+    ["û", "û"],
+    ["ü", "ü"],
+    ["ç", "ç"],
+    ["É", "É"],
+    ["À", "À"],
+    ["Ç", "Ç"],
     ["ÃŽ", "Î"],
-    ["Â©", "©"],
-    ["Â·", "·"],
-    ["Â®", "®"],
-    ["Âµ", "µ"],
+    ["©", "©"],
+    ["·", "·"],
+    ["®", "®"],
+    ["µ", "µ"],
     ["Â", ""],
-    ["â€”", "—"],
-    ["â€“", "–"],
-    ["â€¦", "..."],
-    ["â€¢", "•"],
+    ["—", "—"],
+    ["–", "–"],
+    ["…", "..."],
+    ["•", "•"],
     ["â€", "\""],
-    ["â€™", "'"],
-    ["â€œ", "\""],
-    ["â€", "\""],
-    ["â†’", "→"],
-    ["ðŸ§ ", "🧠 "],
-    ["ðŸ§ ", "🧠"],
-    ["ðŸ“Š", "📊"],
-    ["ðŸ“‹", "📋"],
-    ["ðŸ“·", "📷"],
-    ["ðŸ¤–", "🤖"],
-    ["âš ï¸", "⚠️"],
+    ["’", "'"],
+    ["“", "\""],
+    ["”", "\""],
+    ["→", "→"],
+    ["🧠", "🧠 "],
+    ["🧠", "🧠"],
+    ["📊", "📊"],
+    ["📋", "📋"],
+    ["📷", "📷"],
+    ["🤖", "🤖"],
+    ["⚠️", "⚠️"],
   ];
 
   return replacements.reduce((text, [bad, good]) => text.split(bad).join(good), value);
@@ -337,12 +275,15 @@ const getRiskBucket = (prediction?: string | null) => {
   }
 };
 
+// Neutral notes: the classifier outputs a class label only. It does NOT measure the hippocampus,
+// ventricles or cortex, so the report must never describe imaging findings.
+const AI_NOTE_SUFFIX = "Résultat indicatif d'un modèle de recherche sur une coupe IRM 2D, à confirmer par un neurologue.";
 const AI_NOTES: Record<string, string> = {
-  "Non Demented": "Aucune anomalie significative dÃ©tectÃ©e. Structures cÃ©rÃ©brales normales.",
-  "Very Mild Demented": "Changements trÃ¨s lÃ©gers dÃ©tectÃ©s. Suivi rÃ©gulier recommandÃ©.",
-  "Mild Demented": "Modifications modÃ©rÃ©es dans les rÃ©gions hippocampiques. Attention mÃ©dicale requise.",
-  "Moderate Demented": "Changements modÃ©rÃ©s Ã  sÃ©vÃ¨res. Consultation urgente recommandÃ©e.",
-  "Severe Demented": "Changements significatifs dÃ©tectÃ©s. Protocole de soins spÃ©cialisÃ©s nÃ©cessaire.",
+  "Non Demented": `Classe prédite : Non Demented. ${AI_NOTE_SUFFIX}`,
+  "Very Mild Demented": `Classe prédite : Very Mild Demented. ${AI_NOTE_SUFFIX}`,
+  "Mild Demented": `Classe prédite : Mild Demented. ${AI_NOTE_SUFFIX}`,
+  "Moderate Demented": `Classe prédite : Moderate Demented. ${AI_NOTE_SUFFIX}`,
+  "Severe Demented": `Classe prédite : Severe Demented. ${AI_NOTE_SUFFIX}`,
 };
 
 const escapeHtml = (value: string): string =>
@@ -361,11 +302,7 @@ const REPORT_CARE_PLAN: Record<string, {
 }> = {
   "Non Demented": {
     headline: "Orientation preventive avec surveillance legere et hygiene de vie neuroprotectrice.",
-    medications: [
-      "Aucun traitement specifique requis a ce stade sans avis medical.",
-      "Vitamine D ou omega-3 uniquement si recommandes apres bilan clinique.",
-      "Controle des facteurs vasculaires: tension, glycemie, cholesterol.",
-    ],
+    medications: ["Aucune recommandation médicamenteuse : toute décision de traitement relève du neurologue."],
     activities: [
       "Marche rapide 30 minutes, 5 jours par semaine.",
       "Lecture, jeux de memoire, sudoku, echanges sociaux reguliers.",
@@ -379,11 +316,7 @@ const REPORT_CARE_PLAN: Record<string, {
   },
   "Very Mild Demented": {
     headline: "Prise en charge precoce pour ralentir l'evolution et maintenir l'autonomie.",
-    medications: [
-      "Donepezil ou alternative selon evaluation medicale.",
-      "Suivi de tolerance digestive et du sommeil si traitement debute.",
-      "Supplements seulement si utiles apres bilan.",
-    ],
+    medications: ["Aucune recommandation médicamenteuse : toute décision de traitement relève du neurologue."],
     activities: [
       "Exercices cognitifs quotidiens 20 a 30 minutes.",
       "Marche, danse douce ou natation encadree.",
@@ -397,11 +330,7 @@ const REPORT_CARE_PLAN: Record<string, {
   },
   "Mild Demented": {
     headline: "Strategie therapeutique active pour proteger les fonctions cognitives restantes.",
-    medications: [
-      "Donepezil, rivastigmine ou galantamine selon prescription.",
-      "Memantine possible selon l'evaluation du specialiste.",
-      "Surveillance de l'observance et des effets secondaires.",
-    ],
+    medications: ["Aucune recommandation médicamenteuse : toute décision de traitement relève du neurologue."],
     activities: [
       "Reeducation cognitive avec orthophonie si disponible.",
       "Marche accompagnee et activites simples guidees.",
@@ -415,11 +344,7 @@ const REPORT_CARE_PLAN: Record<string, {
   },
   "Moderate Demented": {
     headline: "Prise en charge pluridisciplinaire avec soutien quotidien plus important.",
-    medications: [
-      "Memantine et/ou inhibiteur de cholinesterase selon le neurologue.",
-      "Traitement des troubles du comportement uniquement si necessaire.",
-      "Reevaluation reguliere du benefice clinique.",
-    ],
+    medications: ["Aucune recommandation médicamenteuse : toute décision de traitement relève du neurologue."],
     activities: [
       "Activites sensorielles, musique, routines tres structurees.",
       "Exercices moteurs doux avec accompagnement.",
@@ -433,11 +358,7 @@ const REPORT_CARE_PLAN: Record<string, {
   },
   "Severe Demented": {
     headline: "Objectif prioritaire: confort, securite et accompagnement intensif.",
-    medications: [
-      "Traitements symptomatiques uniquement selon prescription specialisee.",
-      "Evaluation reguliere douleur, agitation, sommeil et nutrition.",
-      "Adaptation prudente des medicaments selon tolerance.",
-    ],
+    medications: ["Aucune recommandation médicamenteuse : toute décision de traitement relève du neurologue."],
     activities: [
       "Stimulation sensorielle douce et presence rassurante.",
       "Mobilisation passive ou douce avec aide specialisee.",
@@ -453,7 +374,7 @@ const REPORT_CARE_PLAN: Record<string, {
 
 type ZoomViewMode = "fit" | "actual";
 
-// â”€â”€ Conseils mÃ©dicaux IA dÃ©taillÃ©s par stade â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Conseils médicaux IA détaillés par stade ────────────────────────────────
 function generateMedicalAdviceHTML(prediction: string, _symptoms: string[], age?: number): string {
   const ageNote = age ? `(patient de ${age} ans)` : "";
 
@@ -468,267 +389,238 @@ function generateMedicalAdviceHTML(prediction: string, _symptoms: string[], age?
     aidants: string[];
   }> = {
     "Non Demented": {
-      stadeDesc: "Aucun signe clinique de dÃ©mence dÃ©tectÃ©. Le cerveau prÃ©sente des structures normales avec un volume hippocampique dans les limites de la normale. Ce stade reprÃ©sente une opportunitÃ© idÃ©ale pour mettre en place des mesures prÃ©ventives.",
-      medicaments: [
-        { nom: "Aucun mÃ©dicament spÃ©cifique requis", classe: "PrÃ©vention", posologie: "â€”", indication: "Pas de traitement pharmacologique indiquÃ© Ã  ce stade." },
-        { nom: "Vitamine D3 (1000â€“2000 UI/jour)", classe: "SupplÃ©ment", posologie: "1 comprimÃ©/jour avec repas", indication: "Ã‰tudes associent la carence en Vit D Ã  un risque cognitif accru." },
-        { nom: "OmÃ©ga-3 (EPA+DHA 1g/jour)", classe: "SupplÃ©ment neuroprotecteur", posologie: "1 capsule/jour", indication: "Soutien de la membrane neuronale et rÃ©duction de l'inflammation cÃ©rÃ©brale." },
-      ],
+      stadeDesc: AI_NOTE_SUFFIX,
+      medicaments: [],
       cognitif: [
-        "Lecture quotidienne (30 min minimum) â€” stimulation des circuits langagiers.",
+        "Lecture quotidienne (30 min minimum) — stimulation des circuits langagiers.",
         "Apprentissage d'une nouvelle langue ou d'un instrument de musique.",
-        "Mots croisÃ©s, Sudoku, Ã©checs, jeux de mÃ©moire (20 min/jour).",
-        "MÃ©ditation de pleine conscience (10â€“15 min/jour) â€” rÃ©duit le cortisol nÃ©faste.",
-        "Participation Ã  des activitÃ©s culturelles et sociales rÃ©guliÃ¨res.",
+        "Mots croisés, Sudoku, échecs, jeux de mémoire (20 min/jour).",
+        "Méditation de pleine conscience (10–15 min/jour) — réduit le cortisol néfaste.",
+        "Participation à des activités culturelles et sociales régulières.",
       ],
       alimentation: [
-        "RÃ©gime MIND (Mediterranean-DASH Intervention for Neurodegenerative Delay) â€” rÃ©duction de 53% du risque Alzheimer prouvÃ©e.",
-        "LÃ©gumes verts Ã  feuilles : Ã©pinards, chou frisÃ© (6+ portions/semaine).",
+        "Régime MIND (Mediterranean-DASH Intervention for Neurodegenerative Delay) — réduction de 53% du risque Alzheimer prouvée.",
+        "Légumes verts à feuilles : épinards, chou frisé (6+ portions/semaine).",
         "Baies (myrtilles, fraises) riches en anthocyanes neuroprotectrices (2+ portions/semaine).",
-        "Noix et amandes (1 poignÃ©e/jour) â€” source d'omÃ©ga-3 et de vitamine E.",
-        "Poissons gras (saumon, maquereau) 2Ã—/semaine â€” DHA essentiel.",
-        "Limiter : viandes rouges (<4Ã—/semaine), beurre (<1 c.s./jour), sucreries (<5Ã—/semaine).",
-        "Hydratation : 1,5 Ã  2L d'eau/jour â€” dÃ©shydratation = facteur de confusion cognitive.",
+        "Noix et amandes (1 poignée/jour) — source d'oméga-3 et de vitamine E.",
+        "Poissons gras (saumon, maquereau) 2×/semaine — DHA essentiel.",
+        "Limiter : viandes rouges (<4×/semaine), beurre (<1 c.s./jour), sucreries (<5×/semaine).",
+        "Hydratation : 1,5 à 2L d'eau/jour — déshydratation = facteur de confusion cognitive.",
       ],
       physique: [
-        "Marche rapide 30 min/jour, 5 jours/semaine â€” augmente le volume hippocampique.",
-        "Natation ou vÃ©lo 2Ã—/semaine â€” cardio Ã  faible impact.",
-        "Yoga ou Tai-Chi â€” amÃ©liore l'Ã©quilibre et rÃ©duit le stress oxydatif.",
-        "Renforcement musculaire lÃ©ger 2Ã—/semaine â€” liÃ© Ã  meilleure santÃ© cognitive.",
+        "Marche rapide 30 min/jour, 5 jours/semaine (activité physique régulière).",
+        "Natation ou vélo 2×/semaine — cardio à faible impact.",
+        "Yoga ou Tai-Chi — améliore l'équilibre et réduit le stress oxydatif.",
+        "Renforcement musculaire léger 2×/semaine — lié à meilleure santé cognitive.",
       ],
       securite: [
-        "ContrÃ´ler rÃ©guliÃ¨rement tension artÃ©rielle, glycÃ©mie et cholestÃ©rol.",
-        "Ã‰viter le tabac et rÃ©duire l'alcool Ã  <1 verre/jour.",
-        "QualitÃ© du sommeil : 7â€“9h/nuit, Ã©viter les Ã©crans 1h avant coucher.",
-        "Port du casque pour vÃ©lo/moto â€” prÃ©vention des traumatismes crÃ¢niens.",
+        "Contrôler régulièrement tension artérielle, glycémie et cholestérol.",
+        "Éviter le tabac et réduire l'alcool à <1 verre/jour.",
+        "Qualité du sommeil : 7–9h/nuit, éviter les écrans 1h avant coucher.",
+        "Port du casque pour vélo/moto — prévention des traumatismes crâniens.",
       ],
       suivi: [
-        "Bilan neurologique prÃ©ventif tous les 2 ans aprÃ¨s 50 ans.",
-        "Test cognitif de base (MoCA ou MMSE) pour rÃ©fÃ©rence future.",
-        "Bilan sanguin annuel : B12, folates, TSH, glycÃ©mie, bilan lipidique.",
-        "IRM cÃ©rÃ©brale de rÃ©fÃ©rence conseillÃ©e (si Ã¢ge >60 ans).",
+        "Bilan neurologique préventif tous les 2 ans après 50 ans.",
+        "Test cognitif de base (MoCA ou MMSE) pour référence future.",
+        "Bilan sanguin annuel : B12, folates, TSH, glycémie, bilan lipidique.",
+        "IRM cérébrale de référence conseillée (si âge >60 ans).",
       ],
       aidants: [
-        "Aucune aide spÃ©cialisÃ©e requise Ã  ce stade.",
-        "Informer la famille sur les signes prÃ©coces Ã  surveiller.",
-        "Encourager un mode de vie actif et socialement engagÃ©.",
+        "Aucune aide spécialisée requise à ce stade.",
+        "Informer la famille sur les signes précoces à surveiller.",
+        "Encourager un mode de vie actif et socialement engagé.",
       ],
     },
     "Very Mild Demented": {
-      stadeDesc: "DÃ©clin cognitif trÃ¨s lÃ©ger dÃ©tectÃ©. De trÃ¨s subtiles modifications volumÃ©triques hippocampiques sont observÃ©es Ã  l'IRM. Le patient peut prÃ©senter des oublis occasionnels ne perturbant pas la vie quotidienne. Intervention prÃ©coce fortement recommandÃ©e.",
-      medicaments: [
-        { nom: "Donepezil (AriceptÂ®) 5mg", classe: "Inhibiteur de l'acÃ©tylcholinestÃ©rase", posologie: "1 comprimÃ©/jour le soir (augmenter Ã  10mg aprÃ¨s 4â€“6 semaines)", indication: "Premier choix Ã  ce stade. Ralentit la progression en augmentant l'acÃ©tylcholine cÃ©rÃ©brale." },
-        { nom: "Galantamine (ReminylÂ®) 8mg LP", classe: "Inhibiteur de l'acÃ©tylcholinestÃ©rase + modulateur nicotinique", posologie: "1 gÃ©lule/jour le matin avec repas", indication: "Alternative au donÃ©pÃ©zil. Double mÃ©canisme d'action." },
-        { nom: "Rivastigmine (ExelonÂ®) patch 4,6mg/24h", classe: "Inhibiteur de l'acÃ©tylcholinestÃ©rase", posologie: "1 patch/jour sur la peau propre et sÃ¨che", indication: "PrÃ©fÃ©rÃ© en cas de troubles digestifs avec les formes orales." },
-        { nom: "Vitamine E 400 UI", classe: "Antioxydant neuroprotecteur", posologie: "1 comprimÃ©/jour", indication: "RÃ´le antioxydant protecteur des neurones. Ã€ associer avec suivi mÃ©dical." },
-      ],
+      stadeDesc: AI_NOTE_SUFFIX,
+      medicaments: [],
       cognitif: [
-        "EntraÃ®nement cognitif structurÃ© : programme BrainHQ ou Lumosity (30 min/jour).",
-        "Lecture Ã  voix haute pour stimuler mÃ©moire et langage.",
-        "Tenue d'un journal quotidien (agenda structurÃ©).",
-        "ActivitÃ©s artistiques : peinture, poterie, musique.",
-        "Groupes de soutien cognitif â€” interaction sociale bÃ©nÃ©fique.",
-        "Jeux de sociÃ©tÃ© en famille : Scrabble, Trivial Pursuit, puzzles.",
+        "Entraînement cognitif structuré : programme BrainHQ ou Lumosity (30 min/jour).",
+        "Lecture à voix haute pour stimuler mémoire et langage.",
+        "Tenue d'un journal quotidien (agenda structuré).",
+        "Activités artistiques : peinture, poterie, musique.",
+        "Groupes de soutien cognitif — interaction sociale bénéfique.",
+        "Jeux de société en famille : Scrabble, Trivial Pursuit, puzzles.",
       ],
       alimentation: [
-        "RÃ©gime mÃ©diterranÃ©en strict (huile d'olive, lÃ©gumineuses, poissons).",
-        "Curcuma : 1 c.Ã .c./jour dans les repas â€” curcumine anti-inflammatoire cÃ©rÃ©brale.",
-        "CafÃ© modÃ©rÃ© (1â€“2 tasses/jour) â€” cafÃ©ine associÃ©e Ã  rÃ©duction du risque Alzheimer.",
-        "RÃ©duction drastique du sucre raffinÃ© â€” liÃ© Ã  inflammation et rÃ©sistance Ã  l'insuline cÃ©rÃ©brale.",
-        "Aliments riches en flavonoÃ¯des : cacao noir, thÃ© vert, agrumes.",
-        "Ã‰viter les graisses trans (produits industriels, fast-food).",
+        "Régime méditerranéen strict (huile d'olive, légumineuses, poissons).",
+        "Curcuma : 1 c.à.c./jour dans les repas — curcumine anti-inflammatoire cérébrale.",
+        "Café modéré (1–2 tasses/jour) — caféine associée à réduction du risque Alzheimer.",
+        "Réduction drastique du sucre raffiné — lié à inflammation et résistance à l'insuline cérébrale.",
+        "Aliments riches en flavonoïdes : cacao noir, thé vert, agrumes.",
+        "Éviter les graisses trans (produits industriels, fast-food).",
       ],
       physique: [
-        "Marche quotidienne 45 min â€” programme de marche structurÃ©.",
-        "Danse (tango, valse) â€” combien aspect physique et cognitif.",
-        "Natation 3Ã—/semaine.",
-        "SÃ©ances de gym avec coach spÃ©cialisÃ© en bien-Ãªtre senior.",
+        "Marche quotidienne 45 min — programme de marche structuré.",
+        "Danse (tango, valse) — combien aspect physique et cognitif.",
+        "Natation 3×/semaine.",
+        "Séances de gym avec coach spécialisé en bien-être senior.",
       ],
       securite: [
-        "Mettre en place un systÃ¨me d'agenda et de rappels numÃ©riques.",
-        "Informer un proche de confiance des rendez-vous mÃ©dicaux.",
-        "VÃ©rifier la sÃ©curitÃ© du domicile : tapis, Ã©clairage la nuit.",
-        "Supervision lÃ©gÃ¨re pour activitÃ©s complexes (finances, conduite).",
+        "Mettre en place un système d'agenda et de rappels numériques.",
+        "Informer un proche de confiance des rendez-vous médicaux.",
+        "Vérifier la sécurité du domicile : tapis, éclairage la nuit.",
+        "Supervision légère pour activités complexes (finances, conduite).",
       ],
       suivi: [
         "Consultation neurologique tous les 6 mois.",
         "Test MoCA ou MMSE tous les 6 mois pour suivi objectif.",
-        "IRM cÃ©rÃ©brale de contrÃ´le dans 12 mois.",
+        "IRM cérébrale de contrôle dans 12 mois.",
         "Bilan neuropsychologique complet annuel.",
-        "ElectroencÃ©phalogramme (EEG) si suspicion d'Ã©pilepsie associÃ©e.",
+        "Electroencéphalogramme (EEG) si suspicion d'épilepsie associée.",
       ],
       aidants: [
-        "Formation de l'aidant principal aux techniques de communication adaptÃ©e.",
-        "Mettre en place un carnet de communication partagÃ©.",
+        "Formation de l'aidant principal aux techniques de communication adaptée.",
+        "Mettre en place un carnet de communication partagé.",
         "Rejoindre un groupe de soutien pour aidants (France Alzheimer).",
       ],
     },
     "Mild Demented": {
-      stadeDesc: "DÃ©mence lÃ©gÃ¨re confirmÃ©e. L'IRM rÃ©vÃ¨le une atrophie hippocampique modÃ©rÃ©e avec Ã©largissement des sillons corticaux frontaux et temporaux. Le patient prÃ©sente des difficultÃ©s mÃ©morielles quotidiennes, des troubles de l'orientation et une rÃ©duction des capacitÃ©s exÃ©cutives. Traitement pharmacologique nÃ©cessaire.",
-      medicaments: [
-        { nom: "Donepezil (AriceptÂ®) 10mg", classe: "Inhibiteur de l'acÃ©tylcholinestÃ©rase", posologie: "1 comprimÃ©/jour au coucher", indication: "Traitement de rÃ©fÃ©rence. AmÃ©liore les fonctions cognitives et l'autonomie quotidienne." },
-        { nom: "Rivastigmine (ExelonÂ®) patch 9,5mg/24h", classe: "Inhibiteur de cholinestÃ©rase double", posologie: "1 patch/jour, changer chaque 24h", indication: "En cas d'intolÃ©rance au donÃ©pÃ©zil oral. Couvre 24h sans Ã -coups." },
-        { nom: "Galantamine (ReminylÂ®) 16â€“24mg LP", classe: "Inhibiteur de cholinestÃ©rase + modulateur nAChR", posologie: "16mg/jour puis passage Ã  24mg aprÃ¨s 4 semaines", indication: "Dose optimale pour stade modÃ©rÃ©-lÃ©ger." },
-        { nom: "MÃ©mantine (NamendaÂ®/EbixaÂ®) 10â€“20mg", classe: "Antagoniste NMDA", posologie: "Titration : 5mg â†’ 10mg â†’ 15mg â†’ 20mg (1 palier/semaine)", indication: "En association avec inhibiteur cholinestÃ©rase. ProtÃ¨ge contre l'excitotoxicitÃ© au glutamate." },
-        { nom: "MÃ©latonine 2mg LP", classe: "RÃ©gulateur du cycle circadien", posologie: "1 comprimÃ© 30 min avant coucher", indication: "Trouble du sommeil et agitation nocturne frÃ©quents Ã  ce stade." },
-      ],
+      stadeDesc: AI_NOTE_SUFFIX,
+      medicaments: [],
       cognitif: [
-        "Programme de rÃ©Ã©ducation cognitive avec orthophoniste (2Ã—/semaine).",
-        "MusicothÃ©rapie â€” stimulation des circuits Ã©motionnels prÃ©servÃ©s.",
-        "Reminiscence therapy â€” photographies et objets du passÃ© pour stimuler la mÃ©moire Ã©pisodique.",
-        "ActivitÃ©s de la vie quotidienne guidÃ©es : cuisine simple, jardinage.",
-        "Tablette numÃ©rique avec applications cognitives adaptÃ©es (KOALA, OrCam).",
-        "Ã‰viter la surcharge informationnelle â€” une tÃ¢che Ã  la fois.",
+        "Programme de rééducation cognitive avec orthophoniste (2×/semaine).",
+        "Musicothérapie — stimulation des circuits émotionnels préservés.",
+        "Reminiscence therapy — photographies et objets du passé pour stimuler la mémoire épisodique.",
+        "Activités de la vie quotidienne guidées : cuisine simple, jardinage.",
+        "Tablette numérique avec applications cognitives adaptées (KOALA, OrCam).",
+        "Éviter la surcharge informationnelle — une tâche à la fois.",
       ],
       alimentation: [
-        "RÃ©gime MIND strict â€” associÃ© Ã  rÃ©duction de 7,5 ans du dÃ©clin cognitif.",
-        "SupplÃ©mentation B12 si dÃ©ficit (1000 Âµg/jour sublingual).",
-        "Ã‰viter les repas trop copieux (hypoglycÃ©mie postprandiale = risque de confusion).",
-        "Alimentation fractionnÃ©e : 5 petits repas/jour pour stabilitÃ© glycÃ©mique.",
-        "Ã‰viter l'alcool totalement.",
-        "Vigilance sur la dÃ©nutrition et la perte de poids.",
+        "Régime MIND strict — associé à réduction de 7,5 ans du déclin cognitif.",
+        "Supplémentation B12 si déficit (1000 µg/jour sublingual).",
+        "Éviter les repas trop copieux (hypoglycémie postprandiale = risque de confusion).",
+        "Alimentation fractionnée : 5 petits repas/jour pour stabilité glycémique.",
+        "Éviter l'alcool totalement.",
+        "Vigilance sur la dénutrition et la perte de poids.",
       ],
       physique: [
-        "Marche accompagnÃ©e 30â€“45 min/jour.",
-        "KinÃ©sithÃ©rapie spÃ©cialisÃ©e 2Ã—/semaine pour maintien de l'Ã©quilibre.",
-        "HydrothÃ©rapie (balnÃ©othÃ©rapie) si disponible.",
-        "Ã‰viter les sports Ã  risque de chute.",
+        "Marche accompagnée 30–45 min/jour.",
+        "Kinésithérapie spécialisée 2×/semaine pour maintien de l'équilibre.",
+        "Hydrothérapie (balnéothérapie) si disponible.",
+        "Éviter les sports à risque de chute.",
       ],
       securite: [
         "Installation de barres d'appui dans salle de bain et WC.",
-        "DÃ©tecteur de gaz et sÃ©curitÃ© cuisiniÃ¨re automatique recommandÃ©e.",
+        "Détecteur de gaz et sécurité cuisinière automatique recommandée.",
         "Bracelet GPS de localisation (TechSilver, Vivago).",
-        "Supervision nÃ©cessaire pour prise des mÃ©dicaments.",
-        "RÃ©Ã©valuation de l'aptitude Ã  la conduite automobile.",
-        "Mise sous protection juridique si nÃ©cessaire (tutelle/curatelle).",
+        "Supervision nécessaire pour prise des médicaments.",
+        "Réévaluation de l'aptitude à la conduite automobile.",
+        "Mise sous protection juridique si nécessaire (tutelle/curatelle).",
       ],
       suivi: [
         "Consultation neurologique tous les 3 mois.",
-        "Ã‰valuation neuropsychologique complÃ¨te tous les 6 mois.",
-        "IRM cÃ©rÃ©brale de contrÃ´le annuelle.",
-        "Bilan cardio-vasculaire (HTA, diabÃ¨te = facteurs aggravants).",
-        "Bilan orthophonique et ergothÃ©rapique.",
-        "Consultation gÃ©riatrique pour coordination des soins.",
+        "Évaluation neuropsychologique complète tous les 6 mois.",
+        "IRM cérébrale de contrôle annuelle.",
+        "Bilan cardio-vasculaire (HTA, diabète = facteurs aggravants).",
+        "Bilan orthophonique et ergothérapique.",
+        "Consultation gériatrique pour coordination des soins.",
       ],
       aidants: [
-        "PrÃ©sence d'un aidant principal nÃ©cessaire Ã  domicile.",
+        "Présence d'un aidant principal nécessaire à domicile.",
         "Formation obligatoire aux soins Alzheimer (MAIA, SSIAD).",
-        "Aide Ã  domicile 2â€“3h/jour recommandÃ©e.",
-        "Portage de repas si difficultÃ©s de prÃ©paration.",
-        "Accueil de jour spÃ©cialisÃ© (3Ã—/semaine) pour dÃ©charge de l'aidant.",
-        "Aide psychologique pour l'aidant â€” burnout frÃ©quent.",
+        "Aide à domicile 2–3h/jour recommandée.",
+        "Portage de repas si difficultés de préparation.",
+        "Accueil de jour spécialisé (3×/semaine) pour décharge de l'aidant.",
+        "Aide psychologique pour l'aidant — burnout fréquent.",
       ],
     },
     "Moderate Demented": {
-      stadeDesc: "DÃ©mence modÃ©rÃ©e confirmÃ©e. L'IRM montre une atrophie corticale diffuse avec Ã©largissement ventriculaire marquÃ©, touchant les lobes frontaux, temporaux et pariÃ©taux. Le patient nÃ©cessite une assistance pour la majoritÃ© des activitÃ©s quotidiennes. Prise en charge pluridisciplinaire urgente requise.",
-      medicaments: [
-        { nom: "Donepezil (AriceptÂ®) 23mg", classe: "Inhibiteur de l'acÃ©tylcholinestÃ©rase â€” dose Ã©levÃ©e", posologie: "1 comprimÃ©/jour aprÃ¨s repas du soir", indication: "Dose supÃ©rieure indiquÃ©e pour stade modÃ©rÃ© Ã  sÃ©vÃ¨re. AmÃ©liore significativement les fonctions cognitives globales." },
-        { nom: "MÃ©mantine (NamendaÂ®) 20mg/jour", classe: "Antagoniste NMDA", posologie: "10mg matin + 10mg soir, ou 20mg XR en 1 prise", indication: "Traitement de fond essentiel Ã  ce stade. RÃ©duit l'agitation et les troubles comportementaux." },
-        { nom: "NamzaricÂ® (DonÃ©pÃ©zil 10mg + MÃ©mantine 28mg)", classe: "BithÃ©rapie combinÃ©e", posologie: "1 gÃ©lule/jour au coucher", indication: "Combinaison approuvÃ©e FDA pour stade modÃ©rÃ© Ã  sÃ©vÃ¨re. Synergie des deux mÃ©canismes." },
-        { nom: "RispÃ©ridone (RisperdalÂ®) 0,5â€“1mg", classe: "Antipsychotique atypique", posologie: "0,5mg/soir â€” augmenter prudemment si nÃ©cessaire", indication: "En cas d'agitation sÃ©vÃ¨re, agressivitÃ©, hallucinations. Utiliser Ã  la dose minimale efficace." },
-        { nom: "Mirtazapine (RemeronÂ®) 15mg", classe: "AntidÃ©presseur noradrÃ©nergique/sÃ©rotoninergique", posologie: "15mg au coucher (sÃ©datif â€” amÃ©liore le sommeil)", indication: "DÃ©pression associÃ©e, perte d'appÃ©tit et troubles du sommeil." },
-        { nom: "LorazÃ©pam (TemestaÂ®) 0,5mg si besoin", classe: "BenzodiazÃ©pine â€” anxiolytique", posologie: "Ã€ utiliser ponctuellement â€” risque de chute et confusion", indication: "AnxiÃ©tÃ© aiguÃ« ou agitation ponctuelle uniquement." },
-      ],
+      stadeDesc: AI_NOTE_SUFFIX,
+      medicaments: [],
       cognitif: [
-        "Stimulation sensorielle : musicothÃ©rapie, aromathÃ©rapie, art-thÃ©rapie.",
-        "ThÃ©rapie de validation (Naomi Feil) â€” valider les Ã©motions sans corriger.",
+        "Stimulation sensorielle : musicothérapie, aromathérapie, art-thérapie.",
+        "Thérapie de validation (Naomi Feil) — valider les émotions sans corriger.",
         "Communication non-verbale prioritaire : contact visuel, toucher rassurant.",
-        "Maintien d'une routine quotidienne stricte et prÃ©visible.",
-        "RÃ©duire les stimuli environnementaux excessifs (TV, bruit).",
-        "Photobooks personnalisÃ©s â€” stimulation mÃ©moire autobiographique.",
+        "Maintien d'une routine quotidienne stricte et prévisible.",
+        "Réduire les stimuli environnementaux excessifs (TV, bruit).",
+        "Photobooks personnalisés — stimulation mémoire autobiographique.",
       ],
       alimentation: [
-        "Surveillance nutritionnelle rigoureuse â€” risque de dÃ©nutrition Ã©levÃ©.",
-        "Alimentation texturÃ©e si troubles de dÃ©glutition (dysphagie).",
+        "Surveillance nutritionnelle rigoureuse — risque de dénutrition élevé.",
+        "Alimentation texturée si troubles de déglutition (dysphagie).",
         "Enrichissement calorique des repas (huile d'olive, fromage).",
-        "Ã‰valuation par diÃ©tÃ©ticien spÃ©cialisÃ© tous les 3 mois.",
-        "ComplÃ©ments nutritionnels oraux si besoin (Fortimel, Fresubin).",
-        "Hydratation assistÃ©e si oubli de boire.",
+        "Évaluation par diététicien spécialisé tous les 3 mois.",
+        "Compléments nutritionnels oraux si besoin (Fortimel, Fresubin).",
+        "Hydratation assistée si oubli de boire.",
       ],
       physique: [
-        "KinÃ©sithÃ©rapie quotidienne pour prÃ©venir les contractures.",
-        "Marche assistÃ©e avec aide technique (dÃ©ambulateur si nÃ©cessaire).",
-        "PrÃ©vention des escarres si mobilitÃ© rÃ©duite.",
-        "Programme de prÃ©vention des chutes.",
+        "Kinésithérapie quotidienne pour prévenir les contractures.",
+        "Marche assistée avec aide technique (déambulateur si nécessaire).",
+        "Prévention des escarres si mobilité réduite.",
+        "Programme de prévention des chutes.",
       ],
       securite: [
-        "Surveillance continue â€” ne jamais laisser seul Ã  domicile.",
-        "SÃ©curisation complÃ¨te du domicile : fermeture des accÃ¨s extÃ©rieurs.",
-        "Bracelet GPS obligatoire â€” risque de fugue Ã©levÃ©.",
-        "Retrait des objets dangereux (couteaux, mÃ©dicaments accessibles).",
-        "Alarme de lit pour dÃ©placements nocturnes.",
-        "DÃ©claration d'inaptitude Ã  la conduite obligatoire.",
+        "Surveillance continue — ne jamais laisser seul à domicile.",
+        "Sécurisation complète du domicile : fermeture des accès extérieurs.",
+        "Bracelet GPS obligatoire — risque de fugue élevé.",
+        "Retrait des objets dangereux (couteaux, médicaments accessibles).",
+        "Alarme de lit pour déplacements nocturnes.",
+        "Déclaration d'inaptitude à la conduite obligatoire.",
       ],
       suivi: [
         "Consultation neurologique mensuelle ou bimensuelle.",
-        "Hospitalisation en unitÃ© gÃ©riatrique si dÃ©compensation.",
-        "Ã‰valuation MMSE mensuelle.",
-        "Bilan de dÃ©glutition (orthophoniste) si troubles alimentaires.",
-        "Consultation psychiatrique si symptÃ´mes comportementaux sÃ©vÃ¨res.",
-        "Dossier MDPH pour reconnaissance du handicap et aides financiÃ¨res.",
+        "Hospitalisation en unité gériatrique si décompensation.",
+        "Évaluation MMSE mensuelle.",
+        "Bilan de déglutition (orthophoniste) si troubles alimentaires.",
+        "Consultation psychiatrique si symptômes comportementaux sévères.",
+        "Dossier MDPH pour reconnaissance du handicap et aides financières.",
       ],
       aidants: [
-        "Aide professionnelle Ã  domicile 8â€“12h/jour minimum.",
-        "HÃ©bergement en EHPAD spÃ©cialisÃ© Alzheimer Ã  envisager.",
-        "Accueil de jour 5 jours/semaine recommandÃ©.",
-        "Coordination par une Ã©quipe MAIA ou Ã©quipe mobile gÃ©riatrique.",
+        "Aide professionnelle à domicile 8–12h/jour minimum.",
+        "Hébergement en EHPAD spécialisé Alzheimer à envisager.",
+        "Accueil de jour 5 jours/semaine recommandé.",
+        "Coordination par une équipe MAIA ou équipe mobile gériatrique.",
         "Soutien psychologique obligatoire pour l'aidant principal.",
-        "Aides financiÃ¨res : APA, PCH â€” dossier Ã  constituer.",
+        "Aides financières : APA, PCH — dossier à constituer.",
       ],
     },
     "Severe Demented": {
-      stadeDesc: "DÃ©mence sÃ©vÃ¨re confirmÃ©e. L'IRM rÃ©vÃ¨le une atrophie cÃ©rÃ©brale trÃ¨s marquÃ©e avec Ã©largissement ventriculaire extrÃªme et amincissement cortical gÃ©nÃ©ralisÃ©. Le patient a perdu son autonomie complÃ¨te. Les soins palliatifs et le confort de vie sont prioritaires. Accompagnement mÃ©dico-social intensif indispensable.",
-      medicaments: [
-        { nom: "MÃ©mantine (NamendaÂ®) 20mg/jour", classe: "Antagoniste NMDA â€” maintien", posologie: "10mg matin + 10mg soir", indication: "Maintenu pour ralentir la progression et rÃ©duire l'agitation." },
-        { nom: "Donepezil (AriceptÂ®) 10mg ou 23mg", classe: "Inhibiteur cholinestÃ©rase â€” maintien", posologie: "1 comprimÃ©/jour â€” rÃ©Ã©valuation systÃ©matique bÃ©nÃ©fice/risque", indication: "Maintenu si bien tolÃ©rÃ©. ArrÃªt si effets secondaires dominent." },
-        { nom: "RispÃ©ridone (RisperdalÂ®) 0,5â€“2mg/jour", classe: "Antipsychotique atypique", posologie: "Dose minimale efficace â€” rÃ©Ã©valuation mensuelle", indication: "Agitation sÃ©vÃ¨re, comportements perturbateurs, hallucinations." },
-        { nom: "Morphine orale (OramorphÂ®) si douleurs", classe: "Antalgique palliatif", posologie: "Selon Ã©valuation DOLOPLUS / ALGOPLUS", indication: "Gestion de la douleur chronique (soins palliatifs)." },
-        { nom: "Midazolam (HypnovelÂ®) si dÃ©tresse aiguÃ«", classe: "SÃ©dation palliative", posologie: "Prescrit par Ã©quipe palliative spÃ©cialisÃ©e uniquement", indication: "DÃ©tresse terminale insupportable â€” dÃ©cision collÃ©giale." },
-        { nom: "Scopolamine patch ou glycopyrrolate", classe: "AntisÃ©crÃ©toire", posologie: "1 patch toutes les 72h", indication: "Encombrement bronchique et rÃ¢les en phase terminale." },
-      ],
+      stadeDesc: AI_NOTE_SUFFIX,
+      medicaments: [],
       cognitif: [
-        "Stimulation sensorielle douce : musique familiÃ¨re, toucher, parfums.",
-        "Communication par le toucher â€” contact physique rassurant prioritaire.",
-        "Maintien du lien affectif â€” prÃ©sence humaine constante.",
-        "Ã‰viter toute stimulation excessive ou douloureuse.",
-        "ThÃ©rapie Snoezelen si disponible â€” environnement multisensoriel adaptÃ©.",
+        "Stimulation sensorielle douce : musique familière, toucher, parfums.",
+        "Communication par le toucher — contact physique rassurant prioritaire.",
+        "Maintien du lien affectif — présence humaine constante.",
+        "Éviter toute stimulation excessive ou douloureuse.",
+        "Thérapie Snoezelen si disponible — environnement multisensoriel adapté.",
       ],
       alimentation: [
-        "Alimentation palliative â€” objectif : confort, pas nutrition optimale.",
-        "Alimentation entÃ©rale par sonde nasogastrique si refus alimentaire total.",
-        "Soins de bouche rÃ©guliers â€” prÃ©vention mycoses et douleurs.",
-        "Hydrater par voie sous-cutanÃ©e (hypodermoclyse) si dÃ©shydratation.",
-        "DÃ©cision collÃ©giale sur la nutrition artificielle â€” respect des directives anticipÃ©es.",
+        "Alimentation palliative — objectif : confort, pas nutrition optimale.",
+        "Alimentation entérale par sonde nasogastrique si refus alimentaire total.",
+        "Soins de bouche réguliers — prévention mycoses et douleurs.",
+        "Hydrater par voie sous-cutanée (hypodermoclyse) si déshydratation.",
+        "Décision collégiale sur la nutrition artificielle — respect des directives anticipées.",
       ],
       physique: [
-        "Nursing complet par personnel soignant qualifiÃ©.",
-        "Mobilisation passive quotidienne â€” prÃ©vention des escarres (retournements/2h).",
+        "Nursing complet par personnel soignant qualifié.",
+        "Mobilisation passive quotidienne — prévention des escarres (retournements/2h).",
         "Matelas anti-escarres obligatoire.",
-        "Soins cutanÃ©s prÃ©ventifs complets.",
-        "KinÃ©sithÃ©rapie palliative pour maintien du confort.",
+        "Soins cutanés préventifs complets.",
+        "Kinésithérapie palliative pour maintien du confort.",
       ],
       securite: [
-        "Soins en Ã©tablissement spÃ©cialisÃ© (EHPAD unitÃ© protÃ©gÃ©e Alzheimer) recommandÃ©s.",
+        "Soins en établissement spécialisé (EHPAD unité protégée Alzheimer) recommandés.",
         "Personnel soignant 24h/24 indispensable.",
-        "Dispositifs anti-chute : barriÃ¨res de lit adaptÃ©es, chaussons antidÃ©rapants.",
+        "Dispositifs anti-chute : barrières de lit adaptées, chaussons antidérapants.",
         "Surveillance des escarres, infections urinaires, fausses routes.",
-        "PrÃ©vention des pneumopathies d'inhalation.",
+        "Prévention des pneumopathies d'inhalation.",
       ],
       suivi: [
         "Consultation palliative pluridisciplinaire mensuelle.",
-        "RÃ©union de concertation mÃ©dico-soignante rÃ©guliÃ¨re.",
-        "Respect des directives anticipÃ©es et dÃ©signation d'un personne de confiance.",
-        "Accompagnement en soins palliatifs â€” Ã©quipe mobile si domicile.",
+        "Réunion de concertation médico-soignante régulière.",
+        "Respect des directives anticipées et désignation d'un personne de confiance.",
+        "Accompagnement en soins palliatifs — équipe mobile si domicile.",
         "Accompagnement psychologique et spirituel du patient ET de la famille.",
-        "Soutien au deuil anticipÃ© pour les proches.",
+        "Soutien au deuil anticipé pour les proches.",
       ],
       aidants: [
-        "Placement en EHPAD spÃ©cialisÃ© fortement recommandÃ© pour qualitÃ© de soins.",
-        "Si maintien Ã  domicile : infirmiÃ¨re 2Ã—/jour + aide-soignant matin et soir.",
-        "Hospitalisation Ã  domicile (HAD) possible pour phase terminale.",
-        "RÃ©pit obligatoire pour aidant : hÃ©bergement temporaire.",
+        "Placement en EHPAD spécialisé fortement recommandé pour qualité de soins.",
+        "Si maintien à domicile : infirmière 2×/jour + aide-soignant matin et soir.",
+        "Hospitalisation à domicile (HAD) possible pour phase terminale.",
+        "Répit obligatoire pour aidant : hébergement temporaire.",
         "Accompagnement psychologique professionnel de toute la famille.",
-        "Aide juridique : directives anticipÃ©es, testament, procurations.",
+        "Aide juridique : directives anticipées, testament, procurations.",
       ],
     },
   };
@@ -736,7 +628,8 @@ function generateMedicalAdviceHTML(prediction: string, _symptoms: string[], age?
   const a = advice[prediction] ?? advice["Non Demented"];
   const predColor = PREDICTION_COLORS[prediction] ?? "#6b7280";
 
-  const medicBlock = a.medicaments.map(m => `
+  // Drug table removed on purpose (no prescriptions generated from an AI label)
+  const _unusedMedicBlock = a.medicaments.map(m => `
     <tr>
       <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;font-weight:600;color:#1f2937">${m.nom}</td>
       <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;color:#6b7280;font-size:11px">${m.classe}</td>
@@ -749,59 +642,47 @@ function generateMedicalAdviceHTML(prediction: string, _symptoms: string[], age?
 
   return `
     <div style="margin-bottom:20px;padding:14px 18px;background:${predColor}18;border-left:5px solid ${predColor};border-radius:6px">
-      <h3 style="margin:0 0 6px 0;color:${predColor};font-size:15px">ðŸ”¬ Analyse IA â€” Stade : ${prediction} ${ageNote}</h3>
+      <h3 style="margin:0 0 6px 0;color:${predColor};font-size:15px">🔬 Analyse IA — Stade : ${prediction} ${ageNote}</h3>
       <p style="margin:0;color:#374151;font-size:13px;line-height:1.6">${a.stadeDesc}</p>
     </div>
 
-    <div style="margin-bottom:20px">
-      <h3 style="color:#1f2937;font-size:14px;border-bottom:2px solid #e5e7eb;padding-bottom:6px;margin-bottom:10px">ðŸ’Š MÃ©dicaments & Traitements RecommandÃ©s</h3>
-      <p style="font-size:11px;color:#ef4444;margin-bottom:8px">âš ï¸ Toute prescription doit Ãªtre validÃ©e par un mÃ©decin spÃ©cialiste. Ne pas auto-mÃ©dicamenter.</p>
-      <table style="width:100%;border-collapse:collapse;font-size:12px;background:#fff;border-radius:6px;overflow:hidden;border:1px solid #e5e7eb">
-        <thead>
-          <tr style="background:#f8fafc">
-            <th style="padding:8px 10px;text-align:left;color:#6b7280;font-size:11px;border-bottom:2px solid #e5e7eb">MÃ©dicament</th>
-            <th style="padding:8px 10px;text-align:left;color:#6b7280;font-size:11px;border-bottom:2px solid #e5e7eb">Classe</th>
-            <th style="padding:8px 10px;text-align:left;color:#6b7280;font-size:11px;border-bottom:2px solid #e5e7eb">Posologie</th>
-            <th style="padding:8px 10px;text-align:left;color:#6b7280;font-size:11px;border-bottom:2px solid #e5e7eb">Indication</th>
-          </tr>
-        </thead>
-        <tbody>${medicBlock}</tbody>
-      </table>
+    <div style="margin-bottom:20px;padding:10px 14px;border:1px solid #fecaca;background:#fef2f2;border-radius:6px">
+      <p style="margin:0;font-size:12px;color:#991b1b">Ce rapport ne propose aucun médicament : toute décision de traitement relève du neurologue.</p>
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px">
       <div style="background:#f0fdf4;padding:12px;border-radius:6px;border:1px solid #bbf7d0">
-        <h4 style="margin:0 0 8px 0;color:#166534;font-size:13px">ðŸ§  Exercices Cognitifs</h4>
+        <h4 style="margin:0 0 8px 0;color:#166534;font-size:13px">🧠 Exercices Cognitifs</h4>
         <ul style="margin:0;padding-left:16px;font-size:12px">${listBlock(a.cognitif)}</ul>
       </div>
       <div style="background:#fff7ed;padding:12px;border-radius:6px;border:1px solid #fed7aa">
-        <h4 style="margin:0 0 8px 0;color:#9a3412;font-size:13px">ðŸ¥— Alimentation & Nutrition</h4>
+        <h4 style="margin:0 0 8px 0;color:#9a3412;font-size:13px">🥗 Alimentation & Nutrition</h4>
         <ul style="margin:0;padding-left:16px;font-size:12px">${listBlock(a.alimentation)}</ul>
       </div>
       <div style="background:#eff6ff;padding:12px;border-radius:6px;border:1px solid #bfdbfe">
-        <h4 style="margin:0 0 8px 0;color:#1d4ed8;font-size:13px">ðŸƒ ActivitÃ© Physique</h4>
+        <h4 style="margin:0 0 8px 0;color:#1d4ed8;font-size:13px">🏃 Activité Physique</h4>
         <ul style="margin:0;padding-left:16px;font-size:12px">${listBlock(a.physique)}</ul>
       </div>
       <div style="background:#fef2f2;padding:12px;border-radius:6px;border:1px solid #fecaca">
-        <h4 style="margin:0 0 8px 0;color:#991b1b;font-size:13px">ðŸ”’ SÃ©curitÃ© & Environnement</h4>
+        <h4 style="margin:0 0 8px 0;color:#991b1b;font-size:13px">🔒 Sécurité & Environnement</h4>
         <ul style="margin:0;padding-left:16px;font-size:12px">${listBlock(a.securite)}</ul>
       </div>
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:10px">
       <div style="background:#faf5ff;padding:12px;border-radius:6px;border:1px solid #e9d5ff">
-        <h4 style="margin:0 0 8px 0;color:#6b21a8;font-size:13px">ðŸ“… Planning de Suivi MÃ©dical</h4>
+        <h4 style="margin:0 0 8px 0;color:#6b21a8;font-size:13px">📅 Planning de Suivi Médical</h4>
         <ul style="margin:0;padding-left:16px;font-size:12px">${listBlock(a.suivi)}</ul>
       </div>
       <div style="background:#f0fdfa;padding:12px;border-radius:6px;border:1px solid #99f6e4">
-        <h4 style="margin:0 0 8px 0;color:#0f766e;font-size:13px">ðŸ¤ Conseils pour l'Aidant</h4>
+        <h4 style="margin:0 0 8px 0;color:#0f766e;font-size:13px">🤝 Conseils pour l'Aidant</h4>
         <ul style="margin:0;padding-left:16px;font-size:12px">${listBlock(a.aidants)}</ul>
       </div>
     </div>
   `;
 }
 
-// â”€â”€ Composant dÃ©diÃ© : charge l'image IRM d'un patient Ã  la demande â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Composant dédié : charge l'image IRM d'un patient à la demande ──────────
 function PatientIrmPanel({
   patientId,
   patientName,
@@ -820,7 +701,7 @@ function PatientIrmPanel({
     queryKey: ["patient-irm", patientId],
     queryFn: () => getPatientIrmImage(patientId, token),
     enabled: !!patientId && !!token,
-    staleTime: 30 * 1000, // cache 30 s â€” rafraÃ®chissement quasi-immÃ©diat
+    staleTime: 30 * 1000, // cache 30 s — rafraîchissement quasi-immédiat
     retry: 2,
   });
 
@@ -855,17 +736,17 @@ function PatientIrmPanel({
       {(isLoading || isFetching) && !data && (
         <div className="flex flex-col items-center justify-center h-44 rounded-xl border border-border bg-muted/20 gap-2">
           <Loader2 className="h-7 w-7 animate-spin text-primary" />
-          <p className="text-xs text-muted-foreground">Chargement de l'image IRMâ€¦</p>
+          <p className="text-xs text-muted-foreground">Chargement de l'image IRM…</p>
         </div>
       )}
 
-      {/* Erreur rÃ©seau */}
+      {/* Erreur réseau */}
       {isError && !isLoading && (
         <div className="flex flex-col items-center justify-center h-44 rounded-xl border-2 border-dashed border-red-200 bg-red-50 dark:bg-red-900/10 gap-2">
           <ImageOff className="h-8 w-8 text-red-400" />
           <p className="text-xs text-red-500 text-center">
             Impossible de charger l'image<br />
-            <button type="button" onClick={handleRefresh} className="underline text-primary text-[11px] mt-1">RÃ©essayer</button>
+            <button type="button" onClick={handleRefresh} className="underline text-primary text-[11px] mt-1">Réessayer</button>
           </p>
         </div>
       )}
@@ -876,7 +757,7 @@ function PatientIrmPanel({
           <div className="relative group">
             <img
               src={data.irmImage}
-              alt={`IRM â€” ${patientName}`}
+              alt={`IRM — ${patientName}`}
               className="w-full max-h-56 object-contain rounded-xl border border-border bg-black cursor-zoom-in"
               onClick={() => onZoom({ src: data.irmImage!, patientName, date: dateStr })}
             />
@@ -929,15 +810,15 @@ function PatientIrmPanel({
         <div className="flex flex-col items-center justify-center h-44 rounded-xl border-2 border-dashed border-border bg-muted/20 gap-2 text-muted-foreground">
           <ImageOff className="h-8 w-8" />
           <p className="text-xs text-center">
-            Aucune image IRM importÃ©e<br />
-            <span className="text-[10px] opacity-60">Le patient n'a pas encore effectuÃ© de scan</span>
+            Aucune image IRM importée<br />
+            <span className="text-[10px] opacity-60">Le patient n'a pas encore effectué de scan</span>
           </p>
           <button
             type="button"
             onClick={handleRefresh}
             className="flex items-center gap-1 text-[11px] text-primary underline mt-1"
           >
-            <RefreshCw className="h-3 w-3" /> VÃ©rifier Ã  nouveau
+            <RefreshCw className="h-3 w-3" /> Vérifier à nouveau
           </button>
         </div>
       )}
@@ -945,7 +826,7 @@ function PatientIrmPanel({
   );
 }
 
-// â”€â”€ Miniature IRM dans l'onglet Overview â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Miniature IRM dans l'onglet Overview ─────────────────────────────────────
 function OverviewIrmThumb({
   patient,
   token,
@@ -1000,7 +881,7 @@ function OverviewIrmThumb({
   );
 }
 
-// â”€â”€ DonnÃ©es conseils mÃ©dicaux par stade â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Données conseils médicaux par stade ─────────────────────────────────────
 const WEB_ADVICE: Record<string, {
   color: string; bg: string; border: string;
   resume: string;
@@ -1013,53 +894,53 @@ const WEB_ADVICE: Record<string, {
 }> = {
   "Non Demented": {
     color: "#10b981", bg: "bg-emerald-50 dark:bg-emerald-900/10", border: "border-emerald-200 dark:border-emerald-700",
-    resume: "Aucun signe de dÃ©mence. Structures cÃ©rÃ©brales normales. Moment idÃ©al pour la prÃ©vention.",
-    medicaments: ["Vitamine D3 1000â€“2000 UI/jour", "OmÃ©ga-3 EPA+DHA 1g/jour (capsule)"],
-    cognitif: ["Lecture 30 min/jour", "Mots croisÃ©s, Sudoku, Ã©checs", "MÃ©ditation pleine conscience 10â€“15 min/jour", "ActivitÃ©s sociales et culturelles"],
-    alimentation: ["RÃ©gime MIND (mÃ©diterranÃ©en)", "Baies, noix, poissons gras 2Ã—/semaine", "Limiter viandes rouges et sucres raffinÃ©s", "Hydratation : 1,5â€“2 L d'eau/jour"],
-    physique: ["Marche rapide 30 min Ã— 5 jours/semaine", "Natation ou vÃ©lo 2Ã—/semaine", "Yoga ou Tai-Chi"],
-    securite: ["ContrÃ´ler tension, glycÃ©mie, cholestÃ©rol", "Ã‰viter tabac, limiter alcool", "Sommeil 7â€“9h/nuit"],
-    suivi: ["Bilan neurologique prÃ©ventif tous les 2 ans (>50 ans)", "Test MoCA/MMSE de rÃ©fÃ©rence", "Bilan sanguin annuel : B12, TSH, glycÃ©mie"],
+    resume: AI_NOTE_SUFFIX,
+    medicaments: [],
+    cognitif: ["Lecture 30 min/jour", "Mots croisés, Sudoku, échecs", "Méditation pleine conscience 10–15 min/jour", "Activités sociales et culturelles"],
+    alimentation: ["Régime MIND (méditerranéen)", "Baies, noix, poissons gras 2×/semaine", "Limiter viandes rouges et sucres raffinés", "Hydratation : 1,5–2 L d'eau/jour"],
+    physique: ["Marche rapide 30 min × 5 jours/semaine", "Natation ou vélo 2×/semaine", "Yoga ou Tai-Chi"],
+    securite: ["Contrôler tension, glycémie, cholestérol", "Éviter tabac, limiter alcool", "Sommeil 7–9h/nuit"],
+    suivi: ["Bilan neurologique préventif tous les 2 ans (>50 ans)", "Test MoCA/MMSE de référence", "Bilan sanguin annuel : B12, TSH, glycémie"],
   },
   "Very Mild Demented": {
     color: "#f59e0b", bg: "bg-yellow-50 dark:bg-yellow-900/10", border: "border-yellow-200 dark:border-yellow-700",
-    resume: "DÃ©clin cognitif trÃ¨s lÃ©ger. Oublis occasionnels sans impact quotidien. Intervention prÃ©coce recommandÃ©e.",
-    medicaments: ["Donepezil (AriceptÂ®) 5mg/soir", "Galantamine (ReminylÂ®) 8mg LP/matin", "Vitamine E 400 UI/jour"],
-    cognitif: ["Programme BrainHQ ou Lumosity 30 min/jour", "Journal quotidien structurÃ©", "MusicothÃ©rapie, peinture, activitÃ©s artistiques", "Groupes de soutien cognitif"],
-    alimentation: ["RÃ©gime mÃ©diterranÃ©en strict", "Curcuma 1 c.Ã .c./jour", "CafÃ© modÃ©rÃ© 1â€“2 tasses/jour", "FlavonoÃ¯des : cacao noir, thÃ© vert, agrumes"],
-    physique: ["Marche structurÃ©e 45 min/jour", "Danse (tango, valse) 2Ã—/semaine", "Natation 3Ã—/semaine"],
-    securite: ["Agenda et rappels numÃ©riques", "Informer un proche des RDV mÃ©dicaux", "VÃ©rifier sÃ©curitÃ© domicile (Ã©clairage, tapis)"],
-    suivi: ["Consultation neurologique tous les 6 mois", "IRM cÃ©rÃ©brale de contrÃ´le dans 12 mois", "Bilan neuropsychologique annuel"],
+    resume: AI_NOTE_SUFFIX,
+    medicaments: [],
+    cognitif: ["Programme BrainHQ ou Lumosity 30 min/jour", "Journal quotidien structuré", "Musicothérapie, peinture, activités artistiques", "Groupes de soutien cognitif"],
+    alimentation: ["Régime méditerranéen strict", "Curcuma 1 c.à.c./jour", "Café modéré 1–2 tasses/jour", "Flavonoïdes : cacao noir, thé vert, agrumes"],
+    physique: ["Marche structurée 45 min/jour", "Danse (tango, valse) 2×/semaine", "Natation 3×/semaine"],
+    securite: ["Agenda et rappels numériques", "Informer un proche des RDV médicaux", "Vérifier sécurité domicile (éclairage, tapis)"],
+    suivi: ["Consultation neurologique tous les 6 mois", "IRM cérébrale de contrôle dans 12 mois", "Bilan neuropsychologique annuel"],
   },
   "Mild Demented": {
     color: "#f97316", bg: "bg-orange-50 dark:bg-orange-900/10", border: "border-orange-200 dark:border-orange-700",
-    resume: "DÃ©mence lÃ©gÃ¨re confirmÃ©e. DifficultÃ©s mÃ©morielles quotidiennes. Traitement pharmacologique nÃ©cessaire.",
-    medicaments: ["Donepezil (AriceptÂ®) 10mg/soir", "MÃ©mantine (EbixaÂ®) 10â€“20mg (titration)", "MÃ©latonine 2mg LP au coucher"],
-    cognitif: ["RÃ©Ã©ducation cognitive avec orthophoniste 2Ã—/semaine", "MusicothÃ©rapie (circuits Ã©motionnels prÃ©servÃ©s)", "Stimulation sensorielle : jardinage, cuisine adaptÃ©e"],
-    alimentation: ["Aliments anti-inflammatoires (curcuma, baies)", "Fractionnement des repas (5 petits repas/jour)", "Ã‰viter alcool et excitants"],
-    physique: ["Marche accompagnÃ©e 30 min/jour", "SÃ©ances de gym adaptÃ©es senior", "HydrothÃ©rapie si disponible"],
-    securite: ["Supervision pour finances, conduite, gaz", "RepÃ¨res visuels dans le domicile", "Bracelet d'identification mÃ©dicale"],
-    suivi: ["Consultation neurologique tous les 3 mois", "IRM de contrÃ´le tous les 6 mois", "Ã‰valuation gÃ©riatrique complÃ¨te"],
+    resume: AI_NOTE_SUFFIX,
+    medicaments: [],
+    cognitif: ["Rééducation cognitive avec orthophoniste 2×/semaine", "Musicothérapie (circuits émotionnels préservés)", "Stimulation sensorielle : jardinage, cuisine adaptée"],
+    alimentation: ["Aliments anti-inflammatoires (curcuma, baies)", "Fractionnement des repas (5 petits repas/jour)", "Éviter alcool et excitants"],
+    physique: ["Marche accompagnée 30 min/jour", "Séances de gym adaptées senior", "Hydrothérapie si disponible"],
+    securite: ["Supervision pour finances, conduite, gaz", "Repères visuels dans le domicile", "Bracelet d'identification médicale"],
+    suivi: ["Consultation neurologique tous les 3 mois", "IRM de contrôle tous les 6 mois", "Évaluation gériatrique complète"],
   },
   "Moderate Demented": {
     color: "#ef4444", bg: "bg-red-50 dark:bg-red-900/10", border: "border-red-200 dark:border-red-700",
-    resume: "DÃ©mence modÃ©rÃ©e. DÃ©pendance partielle notable. Soins spÃ©cialisÃ©s et entourage renforcÃ© indispensables.",
-    medicaments: ["Donepezil 10mg + MÃ©mantine 20mg (combinaison)", "RispÃ©ridone faible dose si agitation", "AntidÃ©presseurs si dÃ©pression associÃ©e"],
-    cognitif: ["ThÃ©rapie de rÃ©miniscence (photos, musique du passÃ©)", "ActivitÃ©s adaptÃ©es : tri d'objets, jardinage simplifiÃ©", "Communication non-verbale et gestuelle"],
-    alimentation: ["Repas Ã  heures fixes, texture adaptÃ©e si besoin", "Surveillance hydratation (risque dÃ©shydratation)", "SupplÃ©ments nutritionnels si perte de poids"],
-    physique: ["Marche accompagnÃ©e courte 2Ã—/jour", "KinÃ©sithÃ©rapie 2Ã—/semaine", "Exercices d'Ã©quilibre pour prÃ©venir chutes"],
-    securite: ["SÃ©curiser fenÃªtres, escaliers, cuisine", "Serrures de sÃ©curitÃ© sur portes extÃ©rieures", "SystÃ¨me de gÃ©olocalisation GPS si fugues"],
-    suivi: ["Consultation tous les 3 mois", "Ã‰valuation charge aidants (Ã©puisement)", "Envisager hÃ©bergement spÃ©cialisÃ© si nÃ©cessaire"],
+    resume: AI_NOTE_SUFFIX,
+    medicaments: [],
+    cognitif: ["Thérapie de réminiscence (photos, musique du passé)", "Activités adaptées : tri d'objets, jardinage simplifié", "Communication non-verbale et gestuelle"],
+    alimentation: ["Repas à heures fixes, texture adaptée si besoin", "Surveillance hydratation (risque déshydratation)", "Suppléments nutritionnels si perte de poids"],
+    physique: ["Marche accompagnée courte 2×/jour", "Kinésithérapie 2×/semaine", "Exercices d'équilibre pour prévenir chutes"],
+    securite: ["Sécuriser fenêtres, escaliers, cuisine", "Serrures de sécurité sur portes extérieures", "Système de géolocalisation GPS si fugues"],
+    suivi: ["Consultation tous les 3 mois", "Évaluation charge aidants (épuisement)", "Envisager hébergement spécialisé si nécessaire"],
   },
   "Severe Demented": {
     color: "#7f1d1d", bg: "bg-red-100 dark:bg-red-900/20", border: "border-red-300 dark:border-red-600",
-    resume: "DÃ©mence sÃ©vÃ¨re. Perte d'autonomie quasi-totale. Soins palliatifs et confort prioritaires.",
-    medicaments: ["ArrÃªt progressif des traitements peu bÃ©nÃ©fiques", "Antalgiques si douleurs", "Soins de confort : peau, bouche, hygiÃ¨ne"],
-    cognitif: ["Stimulation sensorielle douce (musique calme, toucher)", "PrÃ©sence rassurante, voix familiÃ¨res", "Ã‰viter surcharges cognitives"],
-    alimentation: ["Texture mixÃ©e ou liquide si troubles dÃ©glutition", "Alimentation assistÃ©e bienveillante", "Ã‰valuer nutrition entÃ©rale si dÃ©nutrition sÃ©vÃ¨re"],
-    physique: ["Mobilisation passive au lit/fauteuil", "PrÃ©vention escarres : changements de position", "KinÃ©sithÃ©rapie respiratoire si besoin"],
-    securite: ["Surveillance continue 24h/24", "Ã‰viter contentions sauf urgence mÃ©dicale", "Soins de confort et dignitÃ© en prioritÃ©"],
-    suivi: ["RÃ©union pluridisciplinaire palliative mensuelle", "Soutien psychologique pour la famille", "Directives anticipÃ©es Ã  discuter avec la famille"],
+    resume: AI_NOTE_SUFFIX,
+    medicaments: [],
+    cognitif: ["Stimulation sensorielle douce (musique calme, toucher)", "Présence rassurante, voix familières", "Éviter surcharges cognitives"],
+    alimentation: ["Texture mixée ou liquide si troubles déglutition", "Alimentation assistée bienveillante", "Évaluer nutrition entérale si dénutrition sévère"],
+    physique: ["Mobilisation passive au lit/fauteuil", "Prévention escarres : changements de position", "Kinésithérapie respiratoire si besoin"],
+    securite: ["Surveillance continue 24h/24", "Éviter contentions sauf urgence médicale", "Soins de confort et dignité en priorité"],
+    suivi: ["Réunion pluridisciplinaire palliative mensuelle", "Soutien psychologique pour la famille", "Directives anticipées à discuter avec la famille"],
   },
 };
 
@@ -1154,7 +1035,7 @@ const STAGE_WEB_RESOURCES: Record<string, Array<{ title: string; url: string; de
 const getStageWebResources = (prediction?: string | null) =>
   STAGE_WEB_RESOURCES[prediction ?? ""] ?? STAGE_WEB_RESOURCES["Non Demented"];
 
-// â”€â”€ Composant conseils mÃ©dicaux web â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Composant conseils médicaux web ─────────────────────────────────────────
 function MedicalAdviceWebPanel({ prediction }: { prediction?: string }) {
   const [open, setOpen] = useState(false);
   if (!prediction) return null;
@@ -1162,12 +1043,11 @@ function MedicalAdviceWebPanel({ prediction }: { prediction?: string }) {
   if (!advice) return null;
 
   const sections = [
-    { icon: <Pill className="h-3.5 w-3.5" />,          label: "MÃ©dicaments",       items: advice.medicaments,   col: "text-violet-600" },
     { icon: <Brain className="h-3.5 w-3.5" />,          label: "Exercice cognitif", items: advice.cognitif,      col: "text-blue-600" },
     { icon: <Apple className="h-3.5 w-3.5" />,          label: "Alimentation",      items: advice.alimentation,  col: "text-green-600" },
-    { icon: <Dumbbell className="h-3.5 w-3.5" />,       label: "ActivitÃ© physique", items: advice.physique,      col: "text-orange-600" },
-    { icon: <ShieldCheck className="h-3.5 w-3.5" />,    label: "SÃ©curitÃ©",          items: advice.securite,      col: "text-amber-600" },
-    { icon: <CalendarCheck className="h-3.5 w-3.5" />,  label: "Suivi mÃ©dical",     items: advice.suivi,         col: "text-primary" },
+    { icon: <Dumbbell className="h-3.5 w-3.5" />,       label: "Activité physique", items: advice.physique,      col: "text-orange-600" },
+    { icon: <ShieldCheck className="h-3.5 w-3.5" />,    label: "Sécurité",          items: advice.securite,      col: "text-amber-600" },
+    { icon: <CalendarCheck className="h-3.5 w-3.5" />,  label: "Suivi médical",     items: advice.suivi,         col: "text-primary" },
   ];
 
   return (
@@ -1180,7 +1060,7 @@ function MedicalAdviceWebPanel({ prediction }: { prediction?: string }) {
       >
         <div className="flex items-center gap-2">
           <Lightbulb className="h-4 w-4" style={{ color: advice.color }} />
-          <span className="text-xs font-semibold text-foreground">Recommandations mÃ©dicales IA</span>
+          <span className="text-xs font-semibold text-foreground">Recommandations médicales IA</span>
           <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold text-white" style={{ background: advice.color }}>
             {prediction}
           </span>
@@ -1191,7 +1071,7 @@ function MedicalAdviceWebPanel({ prediction }: { prediction?: string }) {
       {open && (
         <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
           className="px-4 pb-4 space-y-3">
-          {/* RÃ©sumÃ© du stade */}
+          {/* Résumé du stade */}
           <p className="text-xs text-muted-foreground italic border-l-2 pl-3" style={{ borderColor: advice.color }}>
             {advice.resume}
           </p>
@@ -1216,7 +1096,7 @@ function MedicalAdviceWebPanel({ prediction }: { prediction?: string }) {
           {/* Disclaimer */}
           <p className="text-[10px] text-muted-foreground flex items-start gap-1.5 pt-1 border-t border-border/50">
             <HeartHandshake className="h-3 w-3 shrink-0 mt-0.5" />
-            Ces recommandations sont gÃ©nÃ©rÃ©es par l'IA Ã  titre indicatif. Tout traitement doit Ãªtre validÃ© par un mÃ©decin qualifiÃ©.
+            Ces recommandations sont générées par l'IA à titre indicatif. Tout traitement doit être validé par un médecin qualifié.
           </p>
         </motion.div>
       )}
@@ -1224,7 +1104,7 @@ function MedicalAdviceWebPanel({ prediction }: { prediction?: string }) {
   );
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ────────────────────────────────────────────────────────────────────────────
 const Reports = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -1265,7 +1145,7 @@ const Reports = () => {
 
   useEffect(() => {
     if (doctorsError || patientsError) {
-      toast.error("Ã‰chec du chargement des donnÃ©es");
+      toast.error("Échec du chargement des données");
     }
   }, [doctorsError, patientsError]);
 
@@ -1293,27 +1173,14 @@ const Reports = () => {
   const [isRepairing, setIsRepairing] = useState(false);
 
   const handleRepairLinks = async () => {
-    setIsRepairing(true);
-    try {
-      const result = await repairPatientLinks();
-      const { counts } = result;
-      const transferred = result.details.filter((d) => d.imageTransferred).length;
-      toast.success(
-        `RÃ©paration terminÃ©e â€” ${counts["linked-to-official"] ?? 0} dossier(s) liÃ©s` +
-        (transferred > 0 ? `, ${transferred} image(s) transfÃ©rÃ©e(s)` : "")
-      );
-      queryClient.invalidateQueries({ queryKey: ["patient-irm"] });
-      queryClient.invalidateQueries({ queryKey: ["patients-by-doctor"] });
-      queryClient.invalidateQueries({ queryKey: ["all-patients"] });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(`RÃ©paration Ã©chouÃ©e : ${msg}`, { duration: 6000 });
-    } finally {
-      setIsRepairing(false);
-    }
+    // The old "repair" linked/deleted medical records by NAME without login. Records are now linked
+    // only by account id or exact email, so there is nothing to repair.
+    setIsRepairing(false);
+    toast.info("Fonction retirée : les dossiers sont liés uniquement par compte (identifiant ou email exact).");
   };
 
-  // â”€â”€ Computed stats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+  // ── Computed stats ──────────────────────────────────────────────────────────
   const predictionCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     (allPatients as Patient[]).forEach((p) => {
@@ -1397,10 +1264,10 @@ const Reports = () => {
     [patients, search, filterPrediction, filterRisk]
   );
 
-  // â”€â”€ Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Handlers ────────────────────────────────────────────────────────────────
   const handleDownloadCSV = async () => {
     if (!selectedDoctor || patients.length === 0) {
-      toast.error("Aucun patient Ã  exporter");
+      toast.error("Aucun patient à exporter");
       return;
     }
     const loadingToast = toast.loading(`Preparation du CSV... (${patients.length} patient(s))`);
@@ -1559,7 +1426,7 @@ const Reports = () => {
       toast.dismiss(loadingToast);
     }
 
-    // â”€â”€ 2. Convertit un base64 en Blob URL (fiable pour l'impression) â”€â”€â”€â”€â”€
+    // ── 2. Convertit un base64 en Blob URL (fiable pour l'impression) ─────
     const toObjectURL = (b64: string): string => {
       try {
         const [header, data] = b64.split(",");
@@ -2081,7 +1948,7 @@ const Reports = () => {
     );
   }
 
-  // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-full bg-[linear-gradient(180deg,transparent_0%,rgba(255,255,255,0.42)_100%)] px-4 py-5 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl space-y-6 pb-8">
@@ -2170,7 +2037,7 @@ const Reports = () => {
         ))}
       </div>
 
-      {/* â”€â”€ OVERVIEW TAB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── OVERVIEW TAB ─────────────────────────────────────────────────── */}
       {activeTab === "overview" && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
           <h3 className="text-sm font-semibold text-foreground">{repairMojibake("Sélectionner un médecin")}</h3>
@@ -2265,7 +2132,7 @@ const Reports = () => {
                 <p className="mt-3 text-xs text-muted-foreground">Aucun patient prioritaire detecte pour ce medecin.</p>
               )}
             </div>
-            {/* Galerie miniatures IRM â€” chargÃ©e via endpoint dÃ©diÃ© */}
+            {/* Galerie miniatures IRM — chargée via endpoint dédié */}
             {(patients as Patient[]).length > 0 && (
               <div className="border-t border-border pt-4">
                 <p className="text-xs font-semibold text-muted-foreground mb-3 flex items-center gap-1.5">
@@ -2293,7 +2160,7 @@ const Reports = () => {
         </motion.div>
       )}
 
-      {/* â”€â”€ PATIENTS TAB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── PATIENTS TAB ─────────────────────────────────────────────────── */}
       {activeTab === "patients" && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
           {/* Doctor picker + filters */}
@@ -2400,10 +2267,10 @@ const Reports = () => {
                       animate={{ opacity: 1, height: "auto" }}
                       className="border-t border-border"
                     >
-                      {/* â”€â”€ Image IRM + ProbabilitÃ©s cÃ´te Ã  cÃ´te â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+                      {/* ── Image IRM + Probabilités côte à côte ──────────────── */}
                       <div className="grid sm:grid-cols-2 gap-0 divide-y sm:divide-y-0 sm:divide-x divide-border">
 
-                        {/* Image IRM â€” chargÃ©e Ã  la demande */}
+                        {/* Image IRM — chargée à la demande */}
                         <PatientIrmPanel
                           patientId={patient._id}
                           patientName={patient.name}
@@ -2412,7 +2279,7 @@ const Reports = () => {
                           onZoom={setZoomImage}
                         />
 
-                        {/* Scores IA + SymptÃ´mes */}
+                        {/* Scores IA + Symptômes */}
                         <div className="p-4 space-y-3">
                           {(() => {
                             const { bestModel, bestConfidence, totalModels } = getPatientBestModelSummary(patient);
@@ -2488,7 +2355,7 @@ const Reports = () => {
                             );
                           })()}
 
-                          {/* Barres de probabilitÃ© */}
+                          {/* Barres de probabilité */}
                           {patient.probabilities && Object.keys(patient.probabilities).length > 0 ? (
                             <div className="space-y-1.5">
                               <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
@@ -2523,7 +2390,7 @@ const Reports = () => {
                             </div>
                           )}
 
-                          {/* SymptÃ´mes */}
+                          {/* Symptômes */}
                           {patient.symptoms?.length ? (
                             <div>
                               <p className="text-xs font-semibold text-muted-foreground mb-1">{repairMojibake("SYMPTÔMES")}</p>
@@ -2566,7 +2433,7 @@ const Reports = () => {
                         </div>
                       </div>
 
-                      {/* â”€â”€ Conseils mÃ©dicaux IA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+                      {/* ── Conseils médicaux IA ─────────────────────────── */}
                       {patient.prediction && (
                         <div className="border-t border-border">
                           <MedicalAdviceWebPanel prediction={patient.prediction} />
@@ -2594,7 +2461,7 @@ const Reports = () => {
         </motion.div>
       )}
 
-      {/* â”€â”€ CHARTS TAB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── CHARTS TAB ───────────────────────────────────────────────────── */}
       {activeTab === "charts" && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="grid gap-6 lg:grid-cols-2">
           {/* Pie chart */}
@@ -2696,7 +2563,7 @@ const Reports = () => {
         {repairMojibake(`DataScoop — Rapports confidentiels à usage médical uniquement. Généré le ${new Date().toLocaleDateString("fr-FR")}.`)}
       </p>
 
-      {/* â”€â”€ Modal Zoom Image IRM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── Modal Zoom Image IRM ─────────────────────────────────────────── */}
       {zoomImage && (
         <motion.div
           initial={{ opacity: 0 }}
@@ -2775,7 +2642,7 @@ const Reports = () => {
               <div className="flex min-h-full items-center justify-center rounded-[24px] border border-white/8 bg-[radial-gradient(circle_at_top,rgba(148,163,184,0.16),transparent_30%),linear-gradient(180deg,rgba(15,23,42,0.85),rgba(2,6,23,0.96))] p-3 sm:p-6">
                 <img
                   src={zoomImage.src}
-                  alt={`IRM agrandie â€” ${zoomImage.patientName}`}
+                  alt={`IRM agrandie — ${zoomImage.patientName}`}
                   className={`rounded-2xl border border-white/10 bg-black shadow-2xl transition-all duration-300 ${
                     zoomViewMode === "fit"
                       ? "h-auto max-h-[calc(92vh-15rem)] w-full object-contain"

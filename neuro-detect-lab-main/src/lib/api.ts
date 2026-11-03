@@ -669,19 +669,6 @@ export const updatePatient = async (
   return data;
 };
 
-/**
- * Repare les liens entre comptes utilisateurs et dossiers patients.
- * Transfere aussi les images IRM des doublons vers le bon dossier.
- */
-export const repairPatientLinks = async (): Promise<{
-  message: string;
-  counts: Record<string, number>;
-  details: Array<{ user: string; action: string; imageTransferred?: boolean; duplicateRemoved?: boolean }>;
-}> => {
-  const { data } = await axios.post(`${API_BASE}/users/repair-links`);
-  return data;
-};
-
 export const getPatientCount = async (token: string): Promise<{ count: number }> => {
   const { data } = await axios.get(`${API_BASE}/users/patient-count`, {
     headers: { Authorization: `Bearer ${token}` },

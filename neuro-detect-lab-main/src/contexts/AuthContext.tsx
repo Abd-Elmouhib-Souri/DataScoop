@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
+import axios from "axios";
 import { loginUser, registerUser } from "@/lib/api";
 
 export type UserRole = "doctor" | "user";
@@ -27,19 +28,8 @@ export const useAuth = () => {
   return ctx;
 };
 
-// Demo accounts for testing
-const DEMO_ACCOUNTS: Record<string, AuthUser> = {
-  "doctor@demo.com": { id: "doctor@demo.com", name: "Dr. Sarah Mitchell", email: "doctor@demo.com", role: "doctor", token: "doctor@demo.com" },
-  "user@demo.com": { id: "user@demo.com", name: "Ahmed Hassan", email: "user@demo.com", role: "user", token: "user@demo.com" },
-};
-
-const canUseDemoAccounts = () => {
-  if (typeof window === "undefined") return false;
-  const host = window.location.hostname;
-  return host === "localhost" || host === "127.0.0.1" || host === "::1";
-};
-
-const isLikelyMongoId = (value: string) => /^[a-f0-9]{24}$/i.test(value);
+// No demo bypass any more: the old code logged anyone in as "doctor@demo.com" when the login failed
+// on localhost, with the email as token. Demo accounts now go through the real login (see README).
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -50,40 +40,44 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (stored) {
       try {
         const parsed = JSON.parse(stored) as AuthUser;
-        if (!canUseDemoAccounts() && !isLikelyMongoId(parsed.token)) {
-          localStorage.removeItem("alz_user");
-        } else {
+        // A real token is a JWT (header.payload.signature); anything else is an old session -> drop it
+        if (typeof parsed.token === "string" && parsed.token.split(".").length === 3) {
           setUser(parsed);
+        } else {
+          localStorage.removeItem("alz_user");
         }
       } catch {
         localStorage.removeItem("alz_user");
       }
     }
     setIsLoading(false);
+
+    // Expired/invalid token -> the API answers 401 -> log out instead of showing broken pages
+    const interceptor = axios.interceptors.response.use(
+      (response) => response,
+      (error) => {
+        const url: string = error?.config?.url ?? "";
+        if (error?.response?.status === 401 && !url.includes("/users/login") && !url.includes("/users/register")) {
+          localStorage.removeItem("alz_user");
+          setUser(null);
+        }
+        return Promise.reject(error);
+      }
+    );
+    return () => axios.interceptors.response.eject(interceptor);
   }, []);
 
   const login = async (email: string, password: string) => {
-    try {
-      const data = await loginUser(email, password);
-      const authUser: AuthUser = {
-        id: data.id,
-        name: data.name,
-        email: data.email,
-        role: data.role,
-        token: data.token,
-      };
-      localStorage.setItem("alz_user", JSON.stringify(authUser));
-      setUser(authUser);
-      return;
-    } catch (error) {
-      const demo = canUseDemoAccounts() ? DEMO_ACCOUNTS[email] : undefined;
-      if (demo) {
-        localStorage.setItem("alz_user", JSON.stringify(demo));
-        setUser(demo);
-        return;
-      }
-      throw error;
-    }
+    const data = await loginUser(email, password);   // a failed login simply throws (no fallback)
+    const authUser: AuthUser = {
+      id: data.id,
+      name: data.name,
+      email: data.email,
+      role: data.role,
+      token: data.token,
+    };
+    localStorage.setItem("alz_user", JSON.stringify(authUser));
+    setUser(authUser);
   };
 
   const register = async (name: string, email: string, password: string, role: UserRole, doctorKey?: string) => {

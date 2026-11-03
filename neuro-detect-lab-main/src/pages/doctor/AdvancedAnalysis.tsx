@@ -23,6 +23,7 @@ const AdvancedAnalysis = () => {
       setResult(res);
       toast.success("Analysis complete!");
     } catch (error: any) {
+      setResult(null); // never leave an old result on screen after a failed analysis
       const msg = error?.response?.data?.message ?? "Analysis failed. Please try again.";
       toast.error(msg);
     } finally {
@@ -34,7 +35,7 @@ const AdvancedAnalysis = () => {
     <div className="p-6">
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
         <h1 className="font-display text-2xl font-bold text-foreground">Advanced Analysis</h1>
-        <p className="text-sm text-muted-foreground mt-1">Upload MRI for detailed medical-grade analysis with Grad-CAM visualization.</p>
+        <p className="text-sm text-muted-foreground mt-1">Upload a 2D MRI slice for a research-grade multi-model analysis (not a medical device).</p>
       </motion.div>
 
       {result ? (

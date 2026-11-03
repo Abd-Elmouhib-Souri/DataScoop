@@ -1,35 +1,17 @@
 import { BrainCircuit, Cpu, Layers3, ScanSearch } from "lucide-react";
 
+// Only models that passed the measured evaluation (ml_service/eval/model_metrics.json).
+// EfficientNet-B0 is disabled (collapsed to one class); B3/B4 stay disabled until evaluated.
 const ANALYSIS_MODELS = [
   {
-    name: "BestModel",
+    name: "ResNet50",
     label: "Modele principal",
-    description: "CNN principal ajoute a la comparaison multi-modele.",
+    description: "ResNet-50 pre-entraine (ImageNet) puis affine. Choisi a l'avance : meilleur macro-F1 mesure.",
   },
   {
-    name: "EfficientNetB0",
-    label: "Analyse legere",
-    description: "Architecture compacte orientee rapidite et precision.",
-  },
-  {
-    name: "EfficientNetB3",
-    label: "Analyse fine",
-    description: "Variante plus profonde pour des details plus subtils.",
-  },
-  {
-    name: "AlzheimerCNN",
-    label: "IRM specialisee",
-    description: "Modele convolutionnel entraine specifiquement pour les IRM.",
-  },
-  {
-    name: "EfficientNetB4",
-    label: "Analyse detaillee",
-    description: "Modele plus large pour comparer davantage de caracteristiques.",
-  },
-  {
-    name: "UltraBestModel",
-    label: "Comparaison finale",
-    description: "Modele optimise pour renforcer la selection du meilleur score.",
+    name: "CustomCNN",
+    label: "Comparaison",
+    description: "CNN convolutionnel compact. Affiche pour comparaison (split d'entrainement inconnu).",
   },
 ];
 
@@ -43,18 +25,18 @@ const AnalysisModelsPanel = () => {
             Modeles d'analyse du scan
           </div>
           <h2 className="mt-3 font-display text-xl font-bold text-foreground">
-            Cette IRM est comparee par 6 modeles IA avant le resultat final
+            Cette IRM est analysee par {ANALYSIS_MODELS.length} modeles IA evalues
           </h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            Chaque scan est traite en parallele, puis la plateforme retient automatiquement le modele
-            ayant obtenu le meilleur score de confiance sur cette image.
+            Le verdict vient du modele principal, choisi a l'avance sur des mesures (macro-F1 sans fuite de
+            donnees). Prototype de recherche : pas un dispositif medical.
           </p>
         </div>
 
         <div className="grid min-w-[240px] gap-3 rounded-2xl border border-primary/15 bg-primary/5 p-4 text-sm text-muted-foreground sm:grid-cols-3 lg:w-[320px] lg:grid-cols-1">
           <div className="flex items-center gap-2">
             <Layers3 className="h-4 w-4 text-primary" />
-            <span>6 modeles compares</span>
+            <span>{ANALYSIS_MODELS.length} modeles compares</span>
           </div>
           <div className="flex items-center gap-2">
             <ScanSearch className="h-4 w-4 text-primary" />

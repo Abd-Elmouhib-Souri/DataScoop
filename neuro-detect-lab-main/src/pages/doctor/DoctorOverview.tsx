@@ -87,12 +87,14 @@ const DoctorOverview = () => {
 
   const isLoading = usersLoading || patientsLoading || scansLoading;
 
-  // Calculate distribution from actual data
+  // Distribution COUNTED from the patients' stored predictions (the old chart used Math.random)
+  const countPrediction = (label: string) =>
+    (patients as PatientRecord[]).filter((patient) => patient.prediction === label).length;
   const distribution = [
-    { name: "Non Demented", value: Math.floor(Math.random() * 10) + 1, color: "hsl(142,71%,45%)" },
-    { name: "Very Mild", value: Math.floor(Math.random() * 10) + 1, color: "hsl(48,96%,53%)" },
-    { name: "Mild", value: Math.floor(Math.random() * 10) + 1, color: "hsl(25,95%,53%)" },
-    { name: "Moderate", value: Math.floor(Math.random() * 10) + 1, color: "hsl(0,72%,51%)" },
+    { name: "Non Demented", value: countPrediction("Non Demented"), color: "hsl(142,71%,45%)" },
+    { name: "Very Mild", value: countPrediction("Very Mild Demented"), color: "hsl(48,96%,53%)" },
+    { name: "Mild", value: countPrediction("Mild Demented"), color: "hsl(25,95%,53%)" },
+    { name: "Moderate", value: countPrediction("Moderate Demented"), color: "hsl(0,72%,51%)" },
   ];
 
   const highRiskCount = (patients as PatientRecord[]).filter((patient) => getRiskLevel(patient.prediction) === "High").length;
