@@ -5,32 +5,19 @@ const Conversation = require("../models/Conversation");
 const Patient = require("../models/Patient");
 const User = require("../models/User");
 
-// Middleware pour vérifier l'authentification
-const authenticateToken = async (req, res, next) => {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
+const { authenticateToken } = require("../middleware/auth");
+const { findPatientForUser } = require("../utils/patientLink");
 
-  if (!token) {
-    return res.status(401).json({ message: "Token manquant" });
-  }
+// The old local middleware accepted a Mongo _id or an EMAIL as token -> replaced by the shared JWT check.
 
-  // Pour simplifier, on accepte soit l'ID MongoDB soit l'email en tant que token
-  let user = null;
-  try {
-    user = await User.findById(token);
-  } catch (error) {
-    // Si ce n'est pas un ObjectId valide, essayer comme email
-    user = await User.findOne({ email: token });
-  }
-
-  if (!user) {
-    return res.status(401).json({ message: "Utilisateur non trouvé" });
-  }
-
-  req.userId = user._id.toString();
-  req.user = user;
-  next();
-};
+/** Is this user one of the two participants of the conversation? (doctor, or the patient who owns the record) */
+async function isParticipant(user, conversation) {
+  if (!conversation) return false;
+  if (conversation.doctor?.toString() === user._id.toString()) return true;
+  if (user.role !== "user") return false;
+  const patient = await Patient.findById(conversation.patient).select("userId");
+  return patient?.userId?.toString() === user._id.toString();
+}
 
 // Créer ou obtenir une conversation
 router.post("/conversations", authenticateToken, async (req, res) => {
@@ -62,6 +49,9 @@ router.post("/conversations", authenticateToken, async (req, res) => {
     }
     if (!patient) {
       return res.status(404).json({ message: "Patient non trouvé" });
+    }
+    if (req.user.role === "user" && patient.email !== req.user.email && patient.userId?.toString() !== req.userId) {
+      return res.status(403).json({ message: "Accès refusé" });
     }
 
     // Vérifier que le médecin existe
@@ -100,7 +90,7 @@ router.post("/conversations", authenticateToken, async (req, res) => {
 
     res.json(conversation);
   } catch (error) {
-    res.status(500).json({ message: "Erreur serveur", error: error.message });
+    res.status(500).json({ message: "Erreur serveur" });
   }
 });
 
@@ -120,7 +110,9 @@ router.get("/conversations", authenticateToken, async (req, res) => {
         .sort({ updatedAt: -1 });
     } else {
       // Pour les patients, trouver leurs conversations
-      conversations = await Conversation.find({ patient: user._id })
+      // Conversation.patient stores the PATIENT record id (not the user id) -> resolve it first
+      const ownRecord = await findPatientForUser(user);
+      conversations = await Conversation.find({ patient: ownRecord ? ownRecord._id : null })
         .populate("patient", "name email")
         .populate("doctor", "username email")
         .sort({ updatedAt: -1 });
@@ -128,7 +120,7 @@ router.get("/conversations", authenticateToken, async (req, res) => {
 
     res.json(conversations);
   } catch (error) {
-    res.status(500).json({ message: "Erreur serveur", error: error.message });
+    res.status(500).json({ message: "Erreur serveur" });
   }
 });
 
@@ -136,6 +128,10 @@ router.get("/conversations", authenticateToken, async (req, res) => {
 router.get("/conversations/:conversationId/messages", authenticateToken, async (req, res) => {
   try {
     const { conversationId } = req.params;
+    const conversation = await Conversation.findById(conversationId);
+    if (!(await isParticipant(req.user, conversation))) {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
 
     const messages = await Message.find({ conversationId })
       .populate("sender", "username email role")
@@ -144,7 +140,7 @@ router.get("/conversations/:conversationId/messages", authenticateToken, async (
 
     res.json(messages);
   } catch (error) {
-    res.status(500).json({ message: "Erreur serveur", error: error.message });
+    res.status(500).json({ message: "Erreur serveur" });
   }
 });
 
@@ -153,6 +149,13 @@ router.post("/messages", authenticateToken, async (req, res) => {
   try {
     const { conversationId, receiverId, content, messageType = "text" } = req.body;
     const senderId = req.userId;
+    const targetConversation = await Conversation.findById(conversationId); // distinct name: `conversation` is declared later
+    if (!(await isParticipant(req.user, targetConversation))) {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
+    if (typeof content !== "string" || !content.trim()) {
+      return res.status(400).json({ message: "Message vide" });
+    }
 
     const message = new Message({
       conversationId,
@@ -192,7 +195,7 @@ router.post("/messages", authenticateToken, async (req, res) => {
 
     res.json(populatedMessage);
   } catch (error) {
-    res.status(500).json({ message: "Erreur serveur", error: error.message });
+    res.status(500).json({ message: "Erreur serveur" });
   }
 });
 
@@ -201,11 +204,14 @@ router.put("/messages/:messageId/read", authenticateToken, async (req, res) => {
   try {
     const { messageId } = req.params;
 
-    await Message.findByIdAndUpdate(messageId, { isRead: true });
+    const updated = await Message.findOneAndUpdate({ _id: messageId, receiver: req.userId }, { isRead: true });
+    if (!updated) {
+      return res.status(404).json({ message: "Message introuvable" });   // not yours, or does not exist
+    }
 
     res.json({ message: "Message marqué comme lu" });
   } catch (error) {
-    res.status(500).json({ message: "Erreur serveur", error: error.message });
+    res.status(500).json({ message: "Erreur serveur" });
   }
 });
 
@@ -231,6 +237,9 @@ router.put("/patients/assign-doctor", authenticateToken, async (req, res) => {
     if (!patient) {
       return res.status(404).json({ message: "Patient non trouvé" });
     }
+    if (req.user.role === "user" && patient.userId?.toString() !== req.userId && patient.email !== req.user.email) {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
 
     const updatedPatient = await Patient.findByIdAndUpdate(
       patient._id,
@@ -240,7 +249,7 @@ router.put("/patients/assign-doctor", authenticateToken, async (req, res) => {
 
     res.json(updatedPatient);
   } catch (error) {
-    res.status(500).json({ message: "Erreur serveur", error: error.message });
+    res.status(500).json({ message: "Erreur serveur" });
   }
 });
 
@@ -250,7 +259,7 @@ router.get("/doctors", authenticateToken, async (req, res) => {
     const doctors = await User.find({ role: "doctor" }, "username email _id");
     res.json(doctors);
   } catch (error) {
-    res.status(500).json({ message: "Erreur serveur", error: error.message });
+    res.status(500).json({ message: "Erreur serveur" });
   }
 });
 

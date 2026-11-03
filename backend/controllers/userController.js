@@ -1,76 +1,69 @@
+const crypto = require("crypto");
+const bcrypt = require("bcryptjs");
 const User = require("../models/User");
-const Patient = require("../models/Patient");
+const { signToken } = require("../middleware/auth");
+const { findOrCreatePatientForUser } = require("../utils/patientLink");
 
+const BCRYPT_ROUNDS = 12;                 // ~250 ms per hash: slow on purpose against brute force
+const ALLOWED_ROLES = ["user", "doctor"]; // whitelist: any other role is refused
+const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// The response never contains the password; the token is a signed JWT (not the Mongo _id any more)
 const buildAuthResponse = (user) => ({
   id: user._id.toString(),
   name: user.username,
   email: user.email,
   role: user.role,
-  token: user._id.toString(),
+  token: signToken(user),
 });
+
+/** Constant-time comparison, so the doctor key cannot be guessed character by character from timing. */
+const safeEqual = (a, b) => {
+  const x = Buffer.from(String(a)), y = Buffer.from(String(b));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+};
 
 // Register
 exports.register = async (req, res) => {
-  const { name, email, password, role, doctorKey } = req.body;
+  // Cast to strings: objects like {"$ne": null} can never reach a query
+  const name = String(req.body?.name ?? "").trim();
+  const email = String(req.body?.email ?? "").trim().toLowerCase();
+  const password = String(req.body?.password ?? "");
+  const role = String(req.body?.role ?? "user");
 
-  // Verification pour le role docteur
+  if (!name || !EMAIL_RX.test(email)) return res.status(400).json({ message: "Nom ou email invalide" });
+  if (password.length < 8) return res.status(400).json({ message: "Mot de passe : 8 caractères minimum" });
+  if (!ALLOWED_ROLES.includes(role)) return res.status(400).json({ message: "Rôle invalide" });
+
   if (role === "doctor") {
-    const validKey = process.env.DOCTOR_SECRET_KEY || "NEURO2026";
-    if (doctorKey !== validKey) {
+    const validKey = process.env.DOCTOR_SECRET_KEY;          // NO default key in public code any more
+    if (!validKey) return res.status(403).json({ message: "Inscription médecin désactivée sur ce serveur." });
+    if (!safeEqual(req.body?.doctorKey ?? "", validKey)) {
       return res.status(401).json({ message: "Clé secrète médecin invalide. Inscription refusée." });
     }
   }
 
-  const existing = await User.findOne({ email });
-  if (existing) return res.status(400).json({ message: "Email already in use" });
+  if (await User.findOne({ email })) return res.status(400).json({ message: "Email already in use" });
 
-  const user = new User({ username: name, email, password, role });
-  await user.save();
+  const user = await User.create({ username: name, email, password: await bcrypt.hash(password, BCRYPT_ROUNDS), role });
 
-  if (role === "user") {
-    // 1. Chercher un dossier patient déjà créé par l'admin (même email)
-    let patient = await Patient.findOne({ email });
+  // Patient record: linked by account id / exact email only (never by name)
+  if (role === "user") await findOrCreatePatientForUser(user);
 
-    // 2. Sinon chercher par nom (l'admin a utilisé le même prénom/nom)
-    if (!patient && name) {
-      const nameRx = new RegExp(
-        `^${name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
-        "i"
-      );
-      patient = await Patient.findOne({ name: { $regex: nameRx } });
-    }
-
-    if (patient) {
-      // Lier le dossier existant à ce compte — pas de doublon créé
-      await Patient.findByIdAndUpdate(patient._id, {
-        $set: { userId: user._id, email },
-      });
-      console.log(`✅ register: compte "${email}" lié au dossier patient existant "${patient.name}" (${patient._id})`);
-    } else {
-      // Aucun dossier existant → en créer un nouveau avec userId déjà renseigné
-      const newPatient = new Patient({
-        userId: user._id,
-        name,
-        email,
-        age: null,
-        phone: "",
-        symptoms: [],
-        medicalHistory: [],
-      });
-      await newPatient.save();
-      console.log(`✅ register: nouveau dossier patient créé pour "${email}"`);
-    }
-  }
-
-  res.json(buildAuthResponse(user));
+  res.status(201).json(buildAuthResponse(user));
 };
 
-// Login (simple version)
+// Login
 exports.login = async (req, res) => {
-  const { email, password } = req.body;
-  const user = await User.findOne({ email, password });
+  const email = String(req.body?.email ?? "").trim().toLowerCase();
+  const password = String(req.body?.password ?? "");
+  if (!email || !password) return res.status(400).json({ message: "Email et mot de passe requis" });
 
-  if (!user) return res.status(401).json({ message: "Invalid credentials" });
+  // Look up by email ONLY, then compare the hash: the password is never part of the query
+  const user = await User.findOne({ email });
+  const ok = user && typeof user.password === "string" && user.password.startsWith("$2")
+    && (await bcrypt.compare(password, user.password));
+  if (!ok) return res.status(401).json({ message: "Invalid credentials" }); // same message: no account enumeration
 
   res.json(buildAuthResponse(user));
 };
@@ -92,119 +85,5 @@ exports.getPatientUsers = async (req, res) => {
     res.json(patients);
   } catch (error) {
     res.status(500).json({ message: "Error fetching patient users" });
-  }
-};
-
-/**
- * POST /api/users/repair-links
- * Pour chaque compte utilisateur "user" :
- *  1. Cherche le dossier "officiel" (assignedDoctor défini) par email ou nom
- *  2. Cherche le dossier "doublon" (créé à l'inscription, sans médecin) par email
- *  3. Si le doublon a une image IRM et que l'officiel n'en a pas → transfère l'image
- *  4. Lie le dossier officiel au compte (userId)
- *  5. Supprime le doublon pour éviter les conflits futurs
- */
-exports.repairPatientLinks = async (req, res) => {
-  try {
-    const users = await User.find({ role: "user" });
-    const report = [];
-
-    for (const user of users) {
-      const entry = { user: user.email, action: "" };
-
-      // ── Trouver tous les dossiers potentiels pour cet utilisateur ──────────
-      const nameRx = user.username
-        ? new RegExp(`^${user.username.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i")
-        : null;
-
-      // Dossier avec médecin assigné (le "bon" dossier) — priorité au plus récent
-      let officialPatient = await Patient.findOne({
-        assignedDoctor: { $exists: true, $ne: null },
-        $or: [
-          { email: user.email },
-          ...(nameRx ? [{ name: { $regex: nameRx } }] : []),
-        ],
-      }).sort({ createdAt: -1 });
-
-      // Dossier sans médecin — probablement le doublon créé à l'inscription
-      const duplicateByEmail = await Patient.findOne({
-        email: user.email,
-        $or: [
-          { assignedDoctor: { $exists: false } },
-          { assignedDoctor: null },
-        ],
-      });
-
-      // ── Déjà lié au bon dossier ? ──────────────────────────────────────────
-      const alreadyLinked = await Patient.findOne({ userId: user._id });
-      if (alreadyLinked && alreadyLinked.assignedDoctor) {
-        entry.action = "already-linked-with-doctor";
-        report.push(entry);
-        continue;
-      }
-
-      // ── Cas 1 : dossier officiel trouvé ────────────────────────────────────
-      if (officialPatient) {
-        // Transférer l'image du doublon si le dossier officiel n'en a pas
-        if (duplicateByEmail && duplicateByEmail._id.toString() !== officialPatient._id.toString()) {
-          const dupFull = await Patient.findById(duplicateByEmail._id).select("irmImage lastScanDate prediction probabilities bestModel allModels rankedModels totalModels explanation");
-          if (dupFull?.irmImage && !officialPatient.irmImage) {
-            await Patient.findByIdAndUpdate(officialPatient._id, {
-              $set: {
-                irmImage:      dupFull.irmImage,
-                lastScanDate:  dupFull.lastScanDate,
-                prediction:    dupFull.prediction,
-                probabilities: dupFull.probabilities,
-                bestModel:     dupFull.bestModel,
-                allModels:     dupFull.allModels,
-                rankedModels:  dupFull.rankedModels,
-                totalModels:   dupFull.totalModels,
-                explanation:   dupFull.explanation,
-              },
-            });
-            entry.imageTransferred = true;
-          }
-          // Supprimer le doublon
-          await Patient.findByIdAndDelete(duplicateByEmail._id);
-          entry.duplicateRemoved = true;
-        }
-
-        await Patient.findByIdAndUpdate(officialPatient._id, {
-          $set: { userId: user._id, email: user.email },
-        });
-        entry.action = "linked-to-official";
-        report.push(entry);
-        continue;
-      }
-
-      // ── Cas 2 : seulement un doublon sans médecin ──────────────────────────
-      if (duplicateByEmail) {
-        await Patient.findByIdAndUpdate(duplicateByEmail._id, {
-          $set: { userId: user._id },
-        });
-        entry.action = "linked-to-duplicate-no-doctor";
-        report.push(entry);
-        continue;
-      }
-
-      // ── Cas 3 : aucun dossier → créer ─────────────────────────────────────
-      await Patient.create({
-        userId: user._id,
-        name: user.username,
-        email: user.email,
-        age: null, phone: "", symptoms: [], medicalHistory: [],
-      });
-      entry.action = "created";
-      report.push(entry);
-    }
-
-    const counts = report.reduce((acc, e) => {
-      acc[e.action] = (acc[e.action] || 0) + 1;
-      return acc;
-    }, {});
-
-    res.json({ message: "Reparation terminee", counts, details: report });
-  } catch (error) {
-    res.status(500).json({ message: "Erreur lors de la reparation", error: error.message });
   }
 };

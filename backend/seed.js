@@ -1,6 +1,11 @@
 const mongoose = require("mongoose");
 const Patient = require("./models/Patient");
+const bcrypt = require("bcryptjs");
 const User = require("./models/User");
+
+// LOCAL DEMO ONLY: every seeded account uses the password "password" (documented in the README).
+// It is stored as a bcrypt hash, like real accounts.
+const DEMO_PASSWORD_HASH = bcrypt.hashSync("password", 12);
 
 const seedData = async () => {
   try {
@@ -13,31 +18,31 @@ const seedData = async () => {
       {
         username: "Dr. Sarah Mitchell",
         email: "doctor@demo.com",
-        password: "password",
+        password: DEMO_PASSWORD_HASH,
         role: "doctor"
       },
       {
         username: "Dr. Ahmed Hassan",
         email: "doctor2@demo.com",
-        password: "password",
+        password: DEMO_PASSWORD_HASH,
         role: "doctor"
       },
       {
         username: "Dr. Maria Rodriguez",
         email: "doctor3@demo.com",
-        password: "password",
+        password: DEMO_PASSWORD_HASH,
         role: "doctor"
       },
       {
         username: "Ahmed Hassan",
         email: "user@demo.com",
-        password: "password",
+        password: DEMO_PASSWORD_HASH,
         role: "user"
       },
       {
         username: "Fatima Al-Rashid",
         email: "user2@demo.com",
-        password: "password",
+        password: DEMO_PASSWORD_HASH,
         role: "user"
       }
     ]);

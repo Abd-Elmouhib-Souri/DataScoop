@@ -2,17 +2,11 @@
 const User = require("../models/User");
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
+const { findOrCreatePatientForUser, findPatientForUser, canAccessPatient } = require("../utils/patientLink");
 
 // URL du service Python ML
-const ML_SERVICE_URL = process.env.ML_SERVICE_URL || "http://localhost:5001";
-
-// Classes reconnues par les modèles
-const CLASSES = [
-  "Non Demented",
-  "Very Mild Demented",
-  "Mild Demented",
-  "Moderate Demented",
-];
+// 127.0.0.1, not "localhost": Node >= 17 may resolve localhost to IPv6 (::1) while Flask listens on IPv4
+const ML_SERVICE_URL = process.env.ML_SERVICE_URL || "http://127.0.0.1:5001";
 
 const stageRecommendations = {
   "Non Demented": {
@@ -95,94 +89,58 @@ function buildRecommendations(prediction) {
 }
 
 /**
- * Appelle le service Python ML avec l'image.
- * Retourne { prediction, confidence, probabilities, best_model, all_models, explanation }
- * Lève une erreur si le service est inaccessible.
+ * Error raised when NO trustworthy AI answer exists. The caller must answer with `status`
+ * and must NOT write anything to the patient record.
  */
-async function callMLService(fileBuffer, mimeType, originalName) {
-  const boundary = `----NeuroDetectBoundary${Date.now()}`;
-  const filename = originalName || "mri.jpg";
-
-  const header = Buffer.from(
-    `--${boundary}\r\n` +
-    `Content-Disposition: form-data; name="file"; filename="${filename}"\r\n` +
-    `Content-Type: ${mimeType}\r\n\r\n`
-  );
-  const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
-  const body = Buffer.concat([header, fileBuffer, footer]);
-
-  const response = await fetch(`${ML_SERVICE_URL}/predict`, {
-    method: "POST",
-    headers: {
-      "Content-Type": `multipart/form-data; boundary=${boundary}`,
-      "Content-Length": body.length.toString(),
-    },
-    body,
-    signal: AbortSignal.timeout(30_000),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`ML Service error ${response.status}: ${text}`);
+class MLUnavailableError extends Error {
+  constructor(message, status = 503, details = null) {
+    super(message);
+    this.name = "MLUnavailableError";
+    this.status = status;   // 503 = service down / no model, 400/413 = bad image from the client
+    this.details = details; // e.g. which models were excluded and why
   }
-
-  return response.json();
 }
 
 /**
- * Fallback local (simulation) si le service Python est indisponible.
+ * Calls the Python ML service. NO simulated fallback: if it fails, it throws MLUnavailableError.
+ * Uses native FormData/Blob (Node >= 18) instead of a hand-built multipart body.
  */
-function mockMLResult() {
-  const MOCK_MODELS = [
-    "BestModel",
-    "EfficientNetB0",
-    "EfficientNetB3",
-    "AlzheimerCNN",
-    "EfficientNetB4",
-    "UltraBestModel",
-  ];
-  const biasSeeds = [0.25, 0.33, 0.41, 0.29, 0.37, 0.45];
-  const descriptions = {
-    BestModel: "BestModel - mode simulation (service ML indisponible)",
-    EfficientNetB0: "EfficientNetB0 - mode simulation (service ML indisponible)",
-    EfficientNetB3: "EfficientNetB3 - mode simulation (service ML indisponible)",
-    AlzheimerCNN: "AlzheimerCNN - mode simulation (service ML indisponible)",
-    EfficientNetB4: "EfficientNetB4 - mode simulation (service ML indisponible)",
-    UltraBestModel: "UltraBestModel - mode simulation (service ML indisponible)",
-  };
+async function callMLService(fileBuffer, mimeType, originalName) {
+  const form = new FormData();
+  form.append("file", new Blob([fileBuffer], { type: mimeType || "application/octet-stream" }), originalName || "mri.jpg");
 
-  const allModels = {};
-  MOCK_MODELS.forEach((name, mi) => {
-    const raw = CLASSES.map((_, ci) => Math.max(0.01, Math.random() + biasSeeds[(mi + ci) % biasSeeds.length] * 0.3));
-    const sum = raw.reduce((a, b) => a + b, 0);
-    const probs = {};
-    CLASSES.forEach((cls, ci) => { probs[cls] = +((raw[ci] / sum)).toFixed(4); });
-    const best = Object.entries(probs).sort((a, b) => b[1] - a[1])[0];
-    allModels[name] = {
-      prediction: best[0],
-      confidence: best[1],
-      probabilities: probs,
-      inference_time_ms: Math.floor(Math.random() * 200 + 50),
-      mode: "simulated",
-      description: descriptions[name] || `${name} - mode simulation (service ML indisponible)`,
-    };
-  });
+  let response;
+  try {
+    response = await fetch(`${ML_SERVICE_URL}/predict`, {
+      method: "POST",
+      body: form,
+      signal: AbortSignal.timeout(30_000), // never hang the request forever
+    });
+  } catch (err) {
+    throw new MLUnavailableError("Analyse indisponible : le service IA ne répond pas.", 503, err.message);
+  }
 
-  const bestModelName = Object.entries(allModels).sort((a, b) => b[1].confidence - a[1].confidence)[0][0];
-  const best = allModels[bestModelName];
-  const ranked = Object.keys(allModels).sort((a, b) => allModels[b].confidence - allModels[a].confidence);
+  let body = null;
+  try {
+    body = await response.json();
+  } catch {
+    // non-JSON answer -> handled below as an invalid response
+  }
 
-  return {
-    prediction: best.prediction,
-    confidence: best.confidence,
-    probabilities: best.probabilities,
-    best_model: bestModelName,
-    all_models: allModels,
-    ranked_models: ranked,
-    total_models: MOCK_MODELS.length,
-    explanation: `[Mode simulation] Service ML indisponible. ${bestModelName} : ${(best.confidence * 100).toFixed(1)}% de confiance pour "${best.prediction}".`,
-    total_time_ms: 0,
-  };
+  if (!response.ok) {
+    // 400/413 = the image itself is the problem (client error); anything else = service unavailable
+    const status = [400, 413].includes(response.status) ? response.status : 503;
+    throw new MLUnavailableError(body?.error || `Service IA en erreur (${response.status}).`, status, body?.excluded_models || null);
+  }
+  if (!body || typeof body.prediction !== "string") {
+    throw new MLUnavailableError("Réponse du service IA invalide.", 503);
+  }
+  return body;
+}
+
+/** Sends the ML error to the client (the database has not been touched). */
+function sendMlError(res, err) {
+  return res.status(err.status).json({ message: err.message, details: err.details });
 }
 
 function parseDataUrlImage(dataUrl) {
@@ -199,17 +157,6 @@ function parseDataUrlImage(dataUrl) {
     mimeType: match[1] || "image/jpeg",
     buffer: Buffer.from(match[2], "base64"),
   };
-}
-
-async function runMlAnalysisFromBuffer(fileBuffer, mimeType, originalName) {
-  try {
-    const mlResult = await callMLService(fileBuffer, mimeType, originalName);
-    console.log(`✅ ML Service → ${mlResult.best_model} → ${mlResult.prediction} (${(mlResult.confidence * 100).toFixed(1)}%)`);
-    return mlResult;
-  } catch (err) {
-    console.warn(`⚠️  ML Service inaccessible (${err.message}) — fallback simulation`);
-    return mockMLResult();
-  }
 }
 
 async function appendMedicalHistory(patient, mlResult, scanDate, irmImageB64, recommendations) {
@@ -290,7 +237,15 @@ exports.predict = async (req, res) => {
     return res.status(401).json({ message: "Utilisateur non authentifié" });
   }
 
-  const mlResult = await runMlAnalysisFromBuffer(req.file.buffer, req.file.mimetype, req.file.originalname);
+  // 1) AI first. If it fails, stop HERE: no patient update, no history entry, no message to the doctor.
+  let mlResult;
+  try {
+    mlResult = await callMLService(req.file.buffer, req.file.mimetype, req.file.originalname);
+  } catch (err) {
+    if (err instanceof MLUnavailableError) return sendMlError(res, err);
+    throw err; // unexpected bug -> Express 5 turns it into a 500
+  }
+  console.log(`ML Service -> ${mlResult.best_model} -> ${mlResult.prediction} (${(mlResult.confidence * 100).toFixed(1)}%)`);
 
   const { prediction, probabilities, best_model, all_models, ranked_models, explanation, total_time_ms } = mlResult;
   const recommendations = buildRecommendations(prediction);
@@ -301,8 +256,6 @@ exports.predict = async (req, res) => {
 
   const irmUpdate = {
     $set: {
-      userId: user._id,
-      email: user.email,
       prediction,
       probabilities,
       bestModel: best_model || null,
@@ -316,76 +269,10 @@ exports.predict = async (req, res) => {
     },
   };
 
-  let patient = null;
-  const nameRx = user.username
-    ? new RegExp(user.username.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")
-    : null;
-
-  patient = await Patient.findOneAndUpdate(
-    { userId: user._id },
-    irmUpdate,
-    { returnDocument: "after" }
-  );
-  if (patient) console.log(`✅ predict: trouvé par userId → "${patient.name}"`);
-
-  if (!patient) {
-    patient = await Patient.findOneAndUpdate(
-      { email: user.email, assignedDoctor: { $exists: true, $ne: null } },
-      irmUpdate,
-      { returnDocument: "after" }
-    );
-    if (patient) console.log(`✅ predict: trouvé par email+doctor → "${patient.name}"`);
-  }
-
-  if (!patient && nameRx) {
-    patient = await Patient.findOneAndUpdate(
-      { name: { $regex: nameRx }, assignedDoctor: { $exists: true, $ne: null } },
-      irmUpdate,
-      { returnDocument: "after" }
-    );
-    if (patient) console.log(`✅ predict: trouvé par nom+doctor → "${patient.name}"`);
-  }
-
-  if (!patient) {
-    patient = await Patient.findOneAndUpdate(
-      { email: user.email },
-      irmUpdate,
-      { returnDocument: "after" }
-    );
-    if (patient) console.log(`✅ predict: trouvé par email seul → "${patient.name}"`);
-  }
-
-  if (!patient && nameRx) {
-    patient = await Patient.findOneAndUpdate(
-      { name: { $regex: nameRx } },
-      irmUpdate,
-      { returnDocument: "after" }
-    );
-    if (patient) console.log(`✅ predict: trouvé par nom seul → "${patient.name}"`);
-  }
-
-  if (!patient) {
-    console.warn(`⚠️  predict: aucun patient trouvé pour "${user.email}" — création d'un nouveau dossier`);
-    patient = await Patient.create({
-      userId: user._id,
-      name: user.username,
-      email: user.email,
-      age: null,
-      phone: "",
-      symptoms: [],
-      prediction,
-      probabilities,
-      bestModel: best_model || null,
-      allModels: all_models || {},
-      rankedModels: ranked_models || [],
-      totalModels: mlResult.total_models || Object.keys(all_models || {}).length || 1,
-      explanation: explanation || "",
-      recommendations,
-      irmImage: irmImageB64,
-      lastScanDate: scanDate,
-      medicalHistory: [],
-    });
-  }
+  // 2) The record is found by account id / exact email ONLY. The old 5-step chain matched records by
+  //    NAME with an unanchored regex ("Ali" -> "Alia Ben Salah") and could overwrite another patient.
+  let patient = await findOrCreatePatientForUser(user);
+  patient = await Patient.findByIdAndUpdate(patient._id, irmUpdate, { returnDocument: "after" });
 
   await appendMedicalHistory(patient, mlResult, scanDate, irmImageB64, recommendations);
   await notifyAssignedDoctor(patient, mlResult, user._id);
@@ -413,7 +300,7 @@ exports.reanalyzePatientScan = async (req, res) => {
     }
 
     const { buffer, mimeType } = parseDataUrlImage(patient.irmImage);
-    const mlResult = await runMlAnalysisFromBuffer(buffer, mimeType, `${patient.name || "patient"}-reanalyze.jpg`);
+    const mlResult = await callMLService(buffer, mimeType, `${patient.name || "patient"}-reanalyze.jpg`); // throws -> nothing saved
     const scanDate = new Date();
     const recommendations = buildRecommendations(mlResult.prediction);
 
@@ -445,6 +332,7 @@ exports.reanalyzePatientScan = async (req, res) => {
       reanalyzed_at: scanDate,
     });
   } catch (error) {
+    if (error instanceof MLUnavailableError) return sendMlError(res, error); // previous diagnosis is kept unchanged
     console.error("reanalyzePatientScan error:", error);
     return res.status(500).json({ message: "Echec de la reanalyse", error: error.message });
   }
@@ -457,28 +345,7 @@ exports.getHistory = async (req, res) => {
       return res.status(401).json({ message: "Utilisateur non authentifie" });
     }
 
-    const nameRx = user.username
-      ? new RegExp(`^${user.username.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i")
-      : null;
-
-    const candidates = await Patient.find({
-      $or: [
-        { userId: user._id },
-        { email: user.email },
-        ...(nameRx ? [{ name: { $regex: nameRx } }] : []),
-      ],
-    });
-
-    const patient = candidates
-      .sort((a, b) => {
-        const aHasScan = Boolean(a.lastScanDate || a.prediction || a.irmImage);
-        const bHasScan = Boolean(b.lastScanDate || b.prediction || b.irmImage);
-        if (aHasScan !== bHasScan) return Number(bHasScan) - Number(aHasScan);
-
-        const aScanTime = new Date(a.lastScanDate || a.createdAt || 0).getTime();
-        const bScanTime = new Date(b.lastScanDate || b.createdAt || 0).getTime();
-        return bScanTime - aScanTime;
-      })[0];
+    const patient = await findPatientForUser(user); // own record only (no name matching)
 
     if (!patient) {
       return res.json([]);
@@ -538,5 +405,9 @@ exports.getHistory = async (req, res) => {
 exports.getPatientById = async (req, res) => {
   const patient = await Patient.findById(req.params.id);
   if (!patient) return res.status(404).json({ message: "Patient not found" });
+  if (!canAccessPatient(req.user, patient)) return res.status(403).json({ message: "Accès refusé" });
   res.json(patient);
 };
+
+// Exposed for unit tests only
+exports._internal = { callMLService, MLUnavailableError };

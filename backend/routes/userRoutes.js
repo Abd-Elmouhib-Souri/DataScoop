@@ -1,11 +1,13 @@
 const express = require("express");
 const router = express.Router();
-const { register, login, getPatientCount, getPatientUsers, repairPatientLinks } = require("../controllers/userController");
+const { authenticateToken, requireRole } = require("../middleware/auth");
+const { register, login, getPatientCount, getPatientUsers } = require("../controllers/userController");
 
-router.post("/register", register);
-router.post("/login", login);
-router.get("/patient-count", getPatientCount);
-router.get("/patient-users", getPatientUsers);
-router.post("/repair-links", repairPatientLinks);
+router.post("/register", register);   // public
+router.post("/login", login);         // public
+// Patient lists: doctors only (they were public before)
+router.get("/patient-count", authenticateToken, requireRole("doctor"), getPatientCount);
+router.get("/patient-users", authenticateToken, requireRole("doctor"), getPatientUsers);
+// POST /repair-links removed: it linked/deleted medical records with NAME heuristics, without any login.
 
 module.exports = router;

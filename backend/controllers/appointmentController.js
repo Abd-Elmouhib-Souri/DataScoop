@@ -1,6 +1,7 @@
 const Appointment = require("../models/Appointment");
 const Patient = require("../models/Patient");
 const User = require("../models/User");
+const { findOrCreatePatientForUser } = require("../utils/patientLink");
 
 const parseDurationToMinutes = (duration) => {
   const numeric = Number.parseInt(String(duration).replace(/[^\d]/g, ""), 10);
@@ -16,9 +17,6 @@ const computeWindow = (scheduledDate, startTime, durationMinutes) => {
 };
 
 const windowsOverlap = (left, right) => left.start < right.end && right.start < left.end;
-
-const buildExactNameRegex = (name) =>
-  new RegExp(`^${String(name ?? "").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
 
 const serializeAppointment = (appointment) => ({
   _id: appointment._id.toString(),
@@ -47,42 +45,12 @@ const ensureDoctor = async (doctorId) => {
   return doctor;
 };
 
+// Linked by account id / exact email only (the old version also matched by NAME)
 const ensurePatientForUser = async (user) => {
   if (!user) {
     throw new Error("Utilisateur patient introuvable");
   }
-
-  let patient = await Patient.findOne({
-    $or: [
-      { userId: user._id },
-      { email: user.email },
-      { name: { $regex: buildExactNameRegex(user.username) } },
-    ],
-  });
-
-  if (!patient) {
-    patient = await Patient.create({
-      userId: user._id,
-      name: user.username,
-      email: user.email,
-      age: null,
-      phone: "",
-      symptoms: [],
-      medicalHistory: [],
-    });
-    return patient;
-  }
-
-  const updates = {};
-  if (!patient.userId) updates.userId = user._id;
-  if (!patient.email && user.email) updates.email = user.email;
-  if (!patient.name && user.username) updates.name = user.username;
-
-  if (Object.keys(updates).length > 0) {
-    patient = await Patient.findByIdAndUpdate(patient._id, { $set: updates }, { new: true });
-  }
-
-  return patient;
+  return findOrCreatePatientForUser(user);
 };
 
 const ensurePatientByEmail = async (patientEmail) => {
@@ -230,9 +198,20 @@ exports.updateAppointmentStatus = async (req, res) => {
       return res.status(400).json({ message: "Statut non pris en charge" });
     }
 
+    // Authorization: only the doctor of this appointment, or the patient who owns it
+    const existing = await Appointment.findById(req.params.id).populate("patient", "userId");
+    if (!existing) {
+      return res.status(404).json({ message: "Rendez-vous introuvable" });
+    }
+    const isDoctor = existing.doctor?.toString() === req.userId;
+    const isPatient = existing.patient?.userId?.toString() === req.userId;
+    if (!isDoctor && !isPatient) {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
+
     const appointment = await Appointment.findByIdAndUpdate(
       req.params.id,
-      { status, notes },
+      { status, notes: String(notes) },
       { new: true }
     )
       .populate("patient", "name email prediction lastScanDate")
@@ -254,6 +233,9 @@ exports.rescheduleAppointment = async (req, res) => {
     const appointment = await Appointment.findById(req.params.id);
     if (!appointment) {
       return res.status(404).json({ message: "Rendez-vous introuvable" });
+    }
+    if (appointment.doctor?.toString() !== req.userId) {
+      return res.status(403).json({ message: "Accès refusé" });   // another doctor's appointment
     }
 
     const durationMinutes = parseDurationToMinutes(req.body.duration ?? appointment.durationMinutes);

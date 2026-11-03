@@ -1,9 +1,5 @@
 const Patient = require("../models/Patient");
-
-const buildNameRegex = (name) => {
-  if (!name) return null;
-  return new RegExp(`^${name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
-};
+const { findOrCreatePatientForUser: linkPatient } = require("../utils/patientLink");
 
 const defaultAssistantProfile = (user) => ({
   patientName: user?.username || "",
@@ -60,48 +56,21 @@ const serializeJournalEntries = (patient) =>
       note: entry.note || "",
     }));
 
+// Linked by account id / exact email only (the old version also matched by NAME)
 const findOrCreatePatientForUser = async (user) => {
-  const nameRx = buildNameRegex(user.username);
-
-  const candidates = await Patient.find({
-    $or: [
-      { userId: user._id },
-      { email: user.email },
-      ...(nameRx ? [{ name: { $regex: nameRx } }] : []),
-    ],
-  }).sort({ createdAt: -1 });
-
-  if (candidates.length > 0) {
-    const patient = candidates[0];
-    if (!patient.userId) patient.userId = user._id;
-    if (!patient.email) patient.email = user.email;
-    if (!patient.name) patient.name = user.username;
-    patient.assistant = patient.assistant || {};
-    if (!patient.assistant.profile?.patientName) {
-      patient.assistant.profile = {
-        ...defaultAssistantProfile(user),
-        ...(patient.assistant.profile?.toObject?.() || patient.assistant.profile || {}),
-        patientName: patient.assistant?.profile?.patientName || patient.name || user.username,
-      };
-    }
-    await patient.save();
-    return patient;
-  }
-
-  return Patient.create({
-    userId: user._id,
-    name: user.username,
-    email: user.email,
-    age: null,
-    phone: "",
-    symptoms: [],
-    assistant: {
-      profile: defaultAssistantProfile(user),
-      familyMembers: [],
-      reminders: [],
-    },
-    medicalHistory: [],
+  const patient = await linkPatient(user, {
+    assistant: { profile: defaultAssistantProfile(user), familyMembers: [], reminders: [] },
   });
+  patient.assistant = patient.assistant || {};
+  if (!patient.assistant.profile?.patientName) {
+    patient.assistant.profile = {
+      ...defaultAssistantProfile(user),
+      ...(patient.assistant.profile?.toObject?.() || patient.assistant.profile || {}),
+      patientName: patient.assistant?.profile?.patientName || patient.name || user.username,
+    };
+    await patient.save();
+  }
+  return patient;
 };
 
 exports.getAssistantData = async (req, res) => {
