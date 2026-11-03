@@ -1,0 +1,55 @@
+{
+  "_source": "Kaggle evaluation run v1 (2026-10-28), TF 2.20, exact training validation split (10,079 images) and leak-free subset (3,153). Regenerate with: python eval/summarize_results.py <results.json>",
+  "_note": "clean_* = leak-free subset (upper bound: no patient-level split). full_* = original leaky validation split.",
+  "models": {
+    "ResNet50": {
+      "enabled": true,
+      "file": "ultra_best_model.h5",
+      "input_size": [224, 224],
+      "preprocess": "div255",
+      "description": "ResNet-50 (ImageNet) + dense head, fine-tuned - training notebook5252fb6542 (split known)",
+      "split_provenance": "known",
+      "full_accuracy": 0.900,
+      "full_macro_f1": 0.906,
+      "clean_accuracy": 0.814,
+      "clean_accuracy_ci95": [0.800, 0.826],
+      "clean_macro_f1": 0.832,
+      "clean_ece": 0.027
+    },
+    "CustomCNN": {
+      "enabled": true,
+      "file": "alzheimer_cnn_model.h5",
+      "input_size": [224, 224],
+      "preprocess": "div255",
+      "description": "Custom 4-block CNN (training split UNKNOWN - its scores may include training images)",
+      "split_provenance": "unknown",
+      "full_accuracy": 0.810,
+      "full_macro_f1": 0.825,
+      "clean_accuracy": 0.784,
+      "clean_accuracy_ci95": [0.770, 0.799],
+      "clean_macro_f1": 0.809,
+      "clean_ece": 0.047
+    },
+    "EfficientNetB0": {
+      "enabled": false,
+      "file": "efficientnetb0_alzheimer.h5",
+      "input_size": [224, 224],
+      "preprocess": "div255",
+      "disabled_reason": "broken: predicts a single class with both preprocessings (clean macro-F1 0.115 /255, 0.170 raw)"
+    },
+    "EfficientNetB3": {
+      "enabled": false,
+      "file": "efficientnetb3_alzheimer.h5",
+      "input_size": [300, 300],
+      "preprocess": "div255",
+      "disabled_reason": "not yet evaluated (run v1 crashed on GPU memory before this model)"
+    },
+    "EfficientNetB4": {
+      "enabled": false,
+      "file": "best_model_B4_alzheimer.h5",
+      "input_size": [380, 380],
+      "preprocess": "div255",
+      "disabled_reason": "not yet evaluated (run v1 crashed on GPU memory before this model)"
+    }
+  }
+}

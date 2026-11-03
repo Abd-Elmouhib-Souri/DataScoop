@@ -1,0 +1,5 @@
+# Tests only (they use fake models: TensorFlow is NOT needed to run them)
+flask==3.1.*
+numpy>=1.26,<3
+Pillow>=10,<12
+pytest>=8
