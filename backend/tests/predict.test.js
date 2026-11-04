@@ -60,18 +60,42 @@ test("Invalid image (ML 400) -> 400 for the client, nothing written", async () =
   assert.deepEqual(calls, []);
 });
 
-test("Real ML answer -> saved to the patient record", async () => {
-  const ml = { prediction: "Non Demented", confidence: 0.9, probabilities: {}, best_model: "ResNet50",
+test("Real ML answer -> saved for the doctor, patient gets 'pending review' WITHOUT the AI output", async () => {
+  const ml = { prediction: "Non Demented", confidence: 0.9, probabilities: { "Non Demented": 0.9 }, best_model: "ResNet50",
                all_models: {}, ranked_models: ["ResNet50"], explanation: "x", total_models: 1, total_time_ms: 5 };
   global.fetch = async () => new Response(JSON.stringify(ml), { status: 200 });
   const res = fakeRes();
   await controller.predict(fakeReq(), res);
-  assert.equal(res.statusCode, 200);
-  assert.equal(res.body.prediction, "Non Demented");
+  assert.equal(res.statusCode, 202);
+  assert.equal(res.body.status, "pending_review");
+  assert.equal(res.body.prediction, undefined);          // human-in-the-loop: no AI result for the patient
+  assert.equal(res.body.probabilities, undefined);
   assert.ok(calls.includes("Patient.findByIdAndUpdate"), "history entry should be written");
+});
+
+test("Image rejected by the ML input check (422) -> 422 for the client, nothing written", async () => {
+  global.fetch = async () => new Response(JSON.stringify({ error: "Image en couleur" }), { status: 422 });
+  const res = fakeRes();
+  await controller.predict(fakeReq(), res);
+  assert.equal(res.statusCode, 422);
+  assert.deepEqual(calls, []);
 });
 
 test("No simulation code left in the controller", () => {
   const src = require("node:fs").readFileSync(path.join(__dirname, "..", "controllers", "systemController.js"), "utf8");
   assert.ok(!/mockMLResult|Math\.random/.test(src));
+});
+
+test("A doctor's analysis is returned but NOT saved as a patient record", async () => {
+  const ml = { prediction: "Mild Demented", confidence: 0.8, probabilities: {}, best_model: "ResNet50",
+               all_models: {}, ranked_models: ["ResNet50"], explanation: "x", total_models: 1, total_time_ms: 5 };
+  global.fetch = async () => new Response(JSON.stringify(ml), { status: 200 });
+  const req = fakeReq();
+  req.user = { _id: "d1", email: "doctor@demo.com", username: "Dr House", role: "doctor" };
+  const res = fakeRes();
+  await controller.predict(req, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.prediction, "Mild Demented");
+  assert.equal(res.body.saved, false);
+  assert.deepEqual(calls, []);                           // no Patient / Message write
 });

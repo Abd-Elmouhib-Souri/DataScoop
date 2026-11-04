@@ -6,7 +6,7 @@ const { predict, getHistory, getPatientById, reanalyzePatientScan } = require(".
 // In-memory upload, 10 MB max, images only (was: no limit, any file type)
 const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024, files: 1 },
-  fileFilter: (_req, file, cb) => cb(null, /^image\/(png|jpe?g|bmp|tiff?)$/i.test(file.mimetype)),
+  fileFilter: (_req, file, cb) => cb(null, /^image\/(png|jpe?g|webp|bmp|tiff?)$/i.test(file.mimetype)),
 });
 
 const router = express.Router();

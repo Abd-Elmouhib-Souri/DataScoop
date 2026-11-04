@@ -9,6 +9,8 @@ const {
   assignDoctor,
   getPatientsByDoctor,
   getPatientIrmImage,
+  getPendingReviews,
+  reviewScan,
 } = require("../controllers/patientController");
 
 // Every route needs a valid JWT (none did before: anyone could read or rewrite medical records)
@@ -17,6 +19,10 @@ router.use(authenticateToken);
 router.post("/", requireRole("doctor"), createPatient);
 router.get("/", requireRole("doctor"), getPatients);
 router.get("/doctor/:doctorId", requireRole("doctor"), getPatientsByDoctor);
+// Scans waiting for MY review (static path: must be declared BEFORE /:id)
+router.get("/reviews/pending", requireRole("doctor"), getPendingReviews);
+// The assigned doctor validates or corrects an AI suggestion (human-in-the-loop)
+router.post("/:id/reviews/:historyId", requireRole("doctor"), reviewScan);
 // Dedicated MRI route BEFORE /:id; ownership is checked in the controller (doctor or the patient himself)
 router.get("/:id/irm", getPatientIrmImage);
 router.get("/:id", getPatientById);

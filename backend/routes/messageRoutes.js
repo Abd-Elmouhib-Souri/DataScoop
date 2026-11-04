@@ -53,6 +53,11 @@ router.post("/conversations", authenticateToken, async (req, res) => {
     if (req.user.role === "user" && patient.email !== req.user.email && patient.userId?.toString() !== req.userId) {
       return res.status(403).json({ message: "Accès refusé" });
     }
+    // A doctor may only open a conversation with a patient who CHOSE him (no "taking" other patients)
+    if (req.user.role === "doctor"
+        && (String(doctorId) !== req.userId || String(patient.assignedDoctor || "") !== req.userId)) {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
 
     // Vérifier que le médecin existe
     const doctor = await User.findById(doctorId);
@@ -74,13 +79,12 @@ router.post("/conversations", authenticateToken, async (req, res) => {
         doctor: doctorId,
       });
       await conversation.save();
+    }
 
-      // Assigner automatiquement le médecin au patient lors de la création de la conversation
-      await Patient.findByIdAndUpdate(
-        patient._id,
-        { assignedDoctor: doctorId },
-        { new: true }
-      );
+    // The PATIENT choosing a doctor (new OR existing conversation) = explicit choice -> this doctor
+    // now follows him. A doctor never changes the assignment here (he can only reach his own patients).
+    if (req.user.role === "user") {
+      await Patient.findByIdAndUpdate(patient._id, { assignedDoctor: doctorId }, { new: true });
     }
 
     // Retourner la conversation avec les champs doctor et patient peuplés
@@ -180,14 +184,9 @@ router.post("/messages", authenticateToken, async (req, res) => {
       }
     );
 
-    const conversation = await Conversation.findById(conversationId);
-    if (conversation && conversation.patient && conversation.doctor) {
-      await Patient.findByIdAndUpdate(
-        conversation.patient,
-        { assignedDoctor: conversation.doctor },
-        { new: true }
-      );
-    }
+    // (Removed: sending a message used to re-assign the patient to the conversation's doctor, so a
+    // FORMER doctor could take a patient back - and his scans - just by writing in an old conversation.
+    // The assignment now changes only when the patient chooses a doctor: POST /conversations.)
 
     const populatedMessage = await Message.findById(message._id)
       .populate("sender", "username email role")
@@ -238,6 +237,10 @@ router.put("/patients/assign-doctor", authenticateToken, async (req, res) => {
       return res.status(404).json({ message: "Patient non trouvé" });
     }
     if (req.user.role === "user" && patient.userId?.toString() !== req.userId && patient.email !== req.user.email) {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
+    // The patient chooses his doctor; a doctor can only hand over a patient who is currently HIS
+    if (req.user.role === "doctor" && String(patient.assignedDoctor || "") !== req.userId) {
       return res.status(403).json({ message: "Accès refusé" });
     }
 

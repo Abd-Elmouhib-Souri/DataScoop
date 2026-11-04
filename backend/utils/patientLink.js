@@ -28,11 +28,15 @@ async function findOrCreatePatientForUser(user, extra = {}) {
   });
 }
 
-/** True if this user may read this patient record: any doctor, or the patient who owns it. */
+/** True if this user may read this patient record: the doctor the patient CHOSE (assignedDoctor),
+ *  or the patient who owns it. Other doctors are refused (they used to see every patient). */
 function canAccessPatient(user, patient) {
   if (!user || !patient) return false;
-  if (user.role === "doctor") return true;
-  return patient.userId != null && patient.userId.toString() === user._id.toString();
+  if (user.role === "doctor") {
+    return patient.assignedDoctor != null
+      && String(patient.assignedDoctor._id || patient.assignedDoctor) === String(user._id);
+  }
+  return patient.userId != null && String(patient.userId._id || patient.userId) === String(user._id);
 }
 
 module.exports = { findPatientForUser, findOrCreatePatientForUser, canAccessPatient };

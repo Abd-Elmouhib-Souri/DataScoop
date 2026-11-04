@@ -3,6 +3,7 @@ const User = require("../models/User");
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
 const { findOrCreatePatientForUser, findPatientForUser, canAccessPatient } = require("../utils/patientLink");
+const { historyForPatient, patientRecordForPatient } = require("../utils/patientView");
 
 // URL du service Python ML
 // 127.0.0.1, not "localhost": Node >= 17 may resolve localhost to IPv6 (::1) while Flask listens on IPv4
@@ -129,7 +130,7 @@ async function callMLService(fileBuffer, mimeType, originalName) {
 
   if (!response.ok) {
     // 400/413 = the image itself is the problem (client error); anything else = service unavailable
-    const status = [400, 413].includes(response.status) ? response.status : 503;
+    const status = [400, 413, 422].includes(response.status) ? response.status : 503;  // 422 = image rejected by the input check
     throw new MLUnavailableError(body?.error || `Service IA en erreur (${response.status}).`, status, body?.excluded_models || null);
   }
   if (!body || typeof body.prediction !== "string") {
@@ -205,11 +206,10 @@ async function notifyAssignedDoctor(patient, mlResult, senderId) {
     await conversation.save();
   }
 
-  const content = (
-    `[${mlResult.total_models || Object.keys(mlResult.all_models || {}).length || 1} modèles IA] Nouveau scan IRM analysé.\n` +
-    `Meilleur résultat : ${mlResult.best_model} → ${mlResult.prediction} (${((mlResult.confidence || 0) * 100).toFixed(1)}% confiance).\n` +
-    `${mlResult.explanation}`
-  );
+  // No AI result in this message: the patient is a participant of the conversation and must not see it.
+  void mlResult;
+  const content = `Nouvelle IRM reçue le ${new Date().toLocaleDateString("fr-FR")}. ` +
+    "Elle attend votre examen dans le dossier du patient (Scans à valider).";
 
   const message = new Message({
     conversationId: conversation._id.toString(),
@@ -248,6 +248,17 @@ exports.predict = async (req, res) => {
   console.log(`ML Service -> ${mlResult.best_model} -> ${mlResult.prediction} (${(mlResult.confidence * 100).toFixed(1)}%)`);
 
   const { prediction, probabilities, best_model, all_models, ranked_models, explanation, total_time_ms } = mlResult;
+
+  // A DOCTOR analysing an image (Advanced Analysis) is not a patient: return the result WITHOUT
+  // creating or updating any patient record (the old code created a "patient" record named after the doctor).
+  if (user.role === "doctor") {
+    return res.json({
+      prediction, probabilities, heatmap_url: "", explanation, best_model, all_models, ranked_models,
+      excluded_models: mlResult.excluded_models || {},
+      total_models: mlResult.total_models || Object.keys(all_models || {}).length || 1,
+      total_time_ms, saved: false, sentToDoctor: false,
+    });
+  }
   const recommendations = buildRecommendations(prediction);
 
   const mimeType = req.file.mimetype || "image/jpeg";
@@ -277,18 +288,15 @@ exports.predict = async (req, res) => {
   await appendMedicalHistory(patient, mlResult, scanDate, irmImageB64, recommendations);
   await notifyAssignedDoctor(patient, mlResult, user._id);
 
-  res.json({
-    prediction,
-    probabilities,
-    heatmap_url: "",
-    explanation,
-    recommendations,
-    best_model,
-    all_models,
-    ranked_models,
-    total_models: mlResult.total_models || Object.keys(all_models || {}).length || 1,
-    total_time_ms,
-    sentToDoctor: !!(patient && patient.assignedDoctor),
+  // Human-in-the-loop: the PATIENT never receives the AI output. The scan waits for his doctor's review.
+  const hasDoctor = Boolean(patient && patient.assignedDoctor);
+  res.status(202).json({
+    status: "pending_review",
+    scanDate,
+    sentToDoctor: hasDoctor,
+    message: hasDoctor
+      ? "IRM reçue. Votre médecin va l'examiner ; le résultat apparaîtra dans votre historique après sa validation."
+      : "IRM reçue. Choisissez votre médecin dans Conversations pour qu'il puisse l'examiner.",
   });
 };
 
@@ -297,6 +305,9 @@ exports.reanalyzePatientScan = async (req, res) => {
     const patient = await Patient.findById(req.params.id);
     if (!patient) {
       return res.status(404).json({ message: "Patient introuvable" });
+    }
+    if (!canAccessPatient(req.user, patient)) {
+      return res.status(403).json({ message: "Accès refusé" });   // not one of my patients
     }
 
     const { buffer, mimeType } = parseDataUrlImage(patient.irmImage);
@@ -334,79 +345,33 @@ exports.reanalyzePatientScan = async (req, res) => {
   } catch (error) {
     if (error instanceof MLUnavailableError) return sendMlError(res, error); // previous diagnosis is kept unchanged
     console.error("reanalyzePatientScan error:", error);
-    return res.status(500).json({ message: "Echec de la reanalyse", error: error.message });
+    return res.status(500).json({ message: "Echec de la reanalyse" });
   }
 };
 
 exports.getHistory = async (req, res) => {
-  try {
-    const user = req.user;
-    if (!user) {
-      return res.status(401).json({ message: "Utilisateur non authentifie" });
-    }
-
-    const patient = await findPatientForUser(user); // own record only (no name matching)
-
-    if (!patient) {
-      return res.json([]);
-    }
-
-    const historyItems = (patient.medicalHistory || [])
-      .map((item, index) => ({
-        id: `${patient._id}-history-${index}`,
-        patientId: patient._id,
-        date: item.date || patient.lastScanDate || patient.createdAt,
-        createdAt: item.date || patient.createdAt,
-        prediction: item.diagnosis || patient.prediction || "N/A",
-        probabilities: item.probabilities || {},
-        heatmap_url: "",
-        explanation: item.notes || patient.explanation || "",
-        recommendations: item.recommendations || buildRecommendations(item.diagnosis || patient.prediction),
-        bestModel: item.bestModel || null,
-        allModels: item.allModels || {},
-        rankedModels: item.rankedModels || [],
-        totalModels: item.totalModels || Object.keys(item.allModels || {}).length || 0,
-        source: "medicalHistory",
-      }))
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-    const currentScan = patient.prediction || Object.keys(patient.probabilities || {}).length > 0
-      ? {
-          id: `${patient._id}-current`,
-          patientId: patient._id,
-          date: patient.lastScanDate || patient.createdAt,
-          createdAt: patient.createdAt,
-          prediction: patient.prediction || "N/A",
-          probabilities: patient.probabilities || {},
-          heatmap_url: "",
-          explanation: patient.explanation || "",
-          recommendations: patient.recommendations || buildRecommendations(patient.prediction),
-          bestModel: patient.bestModel || null,
-          allModels: patient.allModels || {},
-          rankedModels: patient.rankedModels || [],
-          totalModels: patient.totalModels || Object.keys(patient.allModels || {}).length || 0,
-          source: "current",
-        }
-      : null;
-
-    const latestHistoryTime = historyItems[0]?.date ? new Date(historyItems[0].date).getTime() : null;
-    const currentTime = currentScan?.date ? new Date(currentScan.date).getTime() : null;
-    const mergedHistory = currentScan && currentTime !== latestHistoryTime
-      ? [currentScan, ...historyItems]
-      : historyItems;
-
-    res.json(mergedHistory);
-  } catch (error) {
-    console.error("getHistory error:", error);
-    res.status(500).json({ message: "Erreur lors du chargement de l'historique", error: error.message });
+  const user = req.user;
+  if (user.role === "doctor") {
+    // Doctor: every scan of the patients who chose him (fixes "Total scans: 0" on the dashboard)
+    const patients = await Patient.find({ assignedDoctor: user._id }).select("-irmImage -medicalHistory.irmImage"); // exclusion only: MongoDB refuses a mix of include + exclude
+    const items = patients.flatMap((p) => (p.medicalHistory || []).map((h) => ({
+      id: String(h._id), patientId: p._id, patientName: p.name, date: h.date, createdAt: h.date,
+      prediction: h.diagnosis, probabilities: h.probabilities || {}, bestModel: h.bestModel,
+      allModels: h.allModels || {}, rankedModels: h.rankedModels || [], totalModels: h.totalModels || 0,
+      explanation: h.notes || "", review: h.review || { status: "pending" }, heatmap_url: "",
+    })));
+    return res.json(items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
   }
+  // Patient: own record only, and only diagnoses reviewed by the doctor (pending scans are listed as such)
+  const patient = await findPatientForUser(user);
+  return res.json(patient ? historyForPatient(patient) : []);
 };
 
 exports.getPatientById = async (req, res) => {
   const patient = await Patient.findById(req.params.id);
   if (!patient) return res.status(404).json({ message: "Patient not found" });
   if (!canAccessPatient(req.user, patient)) return res.status(403).json({ message: "Accès refusé" });
-  res.json(patient);
+  res.json(req.user.role === "doctor" ? patient : patientRecordForPatient(patient));
 };
 
 // Exposed for unit tests only

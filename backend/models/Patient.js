@@ -113,6 +113,15 @@ const patientSchema = new mongoose.Schema({
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     },
+    // Human-in-the-loop: the AI result is only a SUGGESTION for the doctor. The patient sees a result
+    // only after the assigned doctor validated or corrected it. Missing review = pending (old entries included).
+    review: {
+      status: { type: String, enum: ["pending", "validated", "corrected"], default: "pending" },
+      finalDiagnosis: { type: String, default: null },   // the doctor's diagnosis (= AI class if validated)
+      comment: { type: String, default: "", trim: true, maxlength: 2000 },
+      reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+      reviewedAt: { type: Date, default: null },
+    },
   }],
   assistant: {
     profile: {
