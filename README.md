@@ -148,7 +148,24 @@ npm install && node seed.js && npm start
 cd neuro-detect-lab-main && npm install && npm run dev          # http://localhost:8080
 ```
 
-Seeded **local demo accounts**: `doctor@demo.com` and `user@demo.com`, password `password` (stored as bcrypt hashes). To create a real doctor account, generate an invitation: `node scripts/create-doctor-invite.js "Dr Name - hospital"` (the code is printed once, valid 7 days, single use). Change them before exposing the app anywhere. If you already have a database with plain-text passwords, run `node scripts/migrate-passwords.js` once. On Windows, `run_all.bat` starts the three services.
+Seeded **local demo accounts**: `doctor@demo.com` and `user@demo.com`, password `password` (stored as bcrypt hashes). Change them before exposing the app anywhere. If you already have a database with plain-text passwords, run `node scripts/migrate-passwords.js` once. On Windows, `run_all.bat` starts the three services.
+
+### Adding a doctor (invitation codes)
+
+Anyone can register as a **patient**. A **doctor** account needs a one-time invitation code, so that nobody can give themselves access to patient files.
+
+1. The platform operator (whoever has access to the server and `backend/.env`) generates a code:
+   ```bash
+   cd backend
+   node scripts/create-doctor-invite.js "Dr Ben Ali - CHU Monastir" 7   # note (who it is for), validity in days (default 7)
+   # -> Doctor invitation code (valid 7 days, single use): 3F9A-1C2B-7D4E-8A60
+   ```
+   The code is **printed once**: the database stores only its SHA-256 hash, so it cannot be shown again. If it is lost, generate a new one.
+2. Send the code to that doctor **personally** through a private channel (a direct WhatsApp message, an email to their professional address…), never in a group or a public place.
+3. The doctor opens the sign-up page, chooses **Medical Professional**, and pastes the code in **Code d'invitation médecin**.
+4. The code is then consumed: it cannot be used for a second account. It is also refused after its expiry date.
+
+Generate one code per doctor and keep the note explicit, so you know which code was meant for whom. To stop an unused code, wait for it to expire (deleting it from the `doctorinvites` collection also works).
 
 ---
 
@@ -168,4 +185,5 @@ Seeded **local demo accounts**: `doctor@demo.com` and `user@demo.com`, password 
 2. Grad-CAM on held-out examples.
 3. Temperature scaling, and a reliability diagram for the confidence values. Then a real out-of-distribution score (e.g. feature-space distance to the training set), so that the system can abstain.
 4. Email verification, password reset, and an HttpOnly session cookie.
-5. Docker Compose, CI running both test suites, and models hosted on the Hugging Face Hub instead of Git LFS.
+5. An **admin** role with a page to create, list and revoke doctor invitations (today this needs a terminal on the server).
+6. Docker Compose, CI running both test suites, and models hosted on the Hugging Face Hub instead of Git LFS.
