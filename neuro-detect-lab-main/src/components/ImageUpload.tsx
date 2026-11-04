@@ -8,11 +8,13 @@ interface ImageUploadProps {
   onFileSelect: (file: File) => void;
   isLoading: boolean;
   onAnalyze: () => void;
+  actionLabel?: string;   // button text (patient: "send to my doctor"; doctor: "analyse")
+  loadingLabel?: string;
 }
 
 const ALLOWED = ["image/jpeg", "image/png", "image/webp"];
 
-const ImageUpload = ({ onFileSelect, isLoading, onAnalyze }: ImageUploadProps) => {
+const ImageUpload = ({ onFileSelect, isLoading, onAnalyze, actionLabel = "Analyser l'image", loadingLabel = "Analyse…" }: ImageUploadProps) => {
   const [preview, setPreview] = useState<string | null>(null);
   const [fileName, setFileName] = useState("");
   const [dragOver, setDragOver] = useState(false);
@@ -119,7 +121,7 @@ const ImageUpload = ({ onFileSelect, isLoading, onAnalyze }: ImageUploadProps) =
               disabled={isLoading}
               className="w-full rounded-xl gradient-medical text-primary-foreground shadow-elevated hover:opacity-90 transition-opacity"
             >
-              {isLoading ? "Analyzing…" : "Analyze Image"}
+              {isLoading ? loadingLabel : actionLabel}
             </Button>
           </motion.div>
         )}

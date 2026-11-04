@@ -483,6 +483,8 @@ const DoctorConversationsPage = () => {
         patientName: selectedConversation.patient.name,
         createdAt: new Date().toISOString(),
         createdBy: user?.name ?? "Equipe medicale",
+        doctorId: user?.id ?? "",
+        doctorName: user?.name ?? "",
         endTime: window.endTime,
       };
     });

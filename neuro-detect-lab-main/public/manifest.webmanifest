@@ -1,6 +1,6 @@
 {
-  "name": "NeuroDetect Lab",
-  "short_name": "NeuroDetect",
+  "name": "DataScoop",
+  "short_name": "DataScoop",
   "description": "Plateforme mobile d'analyse IRM Alzheimer pour patients et medecins.",
   "start_url": "./",
   "scope": "./",

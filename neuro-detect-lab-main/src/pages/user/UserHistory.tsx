@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getHistory } from "@/lib/api";
-import PredictionResult from "@/components/PredictionResult";
 import { toast } from "sonner";
 
 interface ScanRecord {
@@ -31,7 +30,11 @@ interface ScanRecord {
   bestModel?: string | null;
   totalModels?: number;
   source?: string;
+  status?: "pending_review" | "reviewed";   // patient view: only doctor-reviewed results carry a diagnosis
+  reviewedAt?: string | null;
 }
+
+const PENDING = "En attente de validation";
 
 const severityStyles: Record<
   string,
@@ -42,6 +45,13 @@ const severityStyles: Record<
     label: string;
   }
 > = {
+  // Neutral style: a pending scan must never look like a (healthy) result
+  [PENDING]: {
+    dot: "bg-muted-foreground",
+    chip: "bg-muted/60 text-muted-foreground border-border",
+    icon: <Clock3 className="h-4 w-4" />,
+    label: "En attente",
+  },
   "Non Demented": {
     dot: "bg-severity-healthy",
     chip: "bg-severity-healthy/10 text-severity-healthy border-severity-healthy/20",
@@ -123,7 +133,7 @@ const UserHistory = () => {
 
   if (selected) {
     const selectedTopProbability = getTopProbability(selected.probabilities);
-    const selectedCfg = severityStyles[selected.prediction] ?? severityStyles["Non Demented"];
+    const selectedCfg = severityStyles[selected.prediction] ?? severityStyles[PENDING];
 
     return (
       <div className="min-h-full bg-[linear-gradient(180deg,transparent_0%,rgba(255,255,255,0.42)_100%)] px-4 py-5 sm:px-6 lg:px-8">
@@ -145,7 +155,7 @@ const UserHistory = () => {
                 </div>
                 <h1 className="font-display text-2xl font-bold text-foreground">Detail du scan IRM</h1>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Analyse detaillee du resultat selectionne avec prediction et probabilites.
+                  Résultat communiqué par votre médecin après examen de l'IRM.
                 </p>
               </div>
 
@@ -155,34 +165,28 @@ const UserHistory = () => {
               </div>
             </div>
 
-            <div className="mt-5 grid gap-3 md:grid-cols-3">
-              <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Prediction dominante</p>
-                <p className="mt-2 text-sm font-semibold text-foreground">{selectedTopProbability?.[0] ?? selected.prediction}</p>
-              </div>
-              <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Confiance principale</p>
-                <p className="mt-2 text-sm font-semibold text-foreground">
-                  {selectedTopProbability ? `${(selectedTopProbability[1] * 100).toFixed(1)}%` : "Indisponible"}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Modele retenu</p>
-                <p className="mt-2 text-sm font-semibold text-foreground">{selected.bestModel ?? "Analyse globale"}</p>
-              </div>
-            </div>
           </div>
 
-          <PredictionResult
-            data={{
-              prediction: selected.prediction,
-              probabilities: selected.probabilities,
-              heatmap_url: selected.heatmap_url,
-              explanation: selected.explanation,
-              best_model: selected.bestModel ?? undefined,
-              total_models: selected.totalModels,
-            }}
-          />
+          {/* Patient view: the DOCTOR's diagnosis and comment only (no AI probabilities, no model names) */}
+          <div className="rounded-3xl border border-border bg-card p-5 shadow-card">
+            {selected.status === "reviewed" ? (
+              <>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Diagnostic de votre médecin
+                  {selected.reviewedAt ? ` · ${new Date(selected.reviewedAt).toLocaleDateString("fr-FR")}` : ""}
+                </p>
+                <p className="mt-2 text-lg font-semibold text-foreground">{selected.prediction}</p>
+                {selected.explanation && (
+                  <p className="mt-3 rounded-2xl bg-muted/40 p-3 text-sm text-foreground">« {selected.explanation} »</p>
+                )}
+                <p className="mt-3 text-xs text-muted-foreground">Une question ? Écrivez à votre médecin dans Conversations.</p>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Votre médecin n'a pas encore examiné cette IRM. Le résultat apparaîtra ici après sa validation.
+              </p>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -217,11 +221,9 @@ const UserHistory = () => {
                   <p className="mt-1 text-sm text-muted-foreground">
                     {new Date(latestScan.date || latestScan.createdAt || "").toLocaleDateString("fr-FR")}
                   </p>
-                  {latestTopProbability && (
-                    <p className="mt-3 text-sm font-medium text-primary">
-                      Score principal: {(latestTopProbability[1] * 100).toFixed(1)}%
-                    </p>
-                  )}
+                  <p className="mt-3 text-sm font-medium text-primary">
+                    {latestScan.status === "reviewed" ? "Validé par votre médecin" : "En attente de validation"}
+                  </p>
                 </div>
               )}
             </div>
@@ -264,7 +266,7 @@ const UserHistory = () => {
           <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
             <div className="space-y-4">
               {typedScans.map((scan, index) => {
-                const cfg = severityStyles[scan.prediction] ?? severityStyles["Non Demented"];
+                const cfg = severityStyles[scan.prediction] ?? severityStyles[PENDING];
                 const topProbability = getTopProbability(scan.probabilities);
 
                 return (
@@ -301,9 +303,9 @@ const UserHistory = () => {
 
                           <div className="flex items-center gap-3">
                             <div className="text-right">
-                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Score principal</p>
-                              <p className="mt-1 text-base font-bold text-foreground">
-                                {topProbability ? `${(topProbability[1] * 100).toFixed(1)}%` : "--"}
+                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Statut</p>
+                              <p className="mt-1 text-sm font-bold text-foreground">
+                                {scan.status === "reviewed" ? "Validé" : "En attente"}
                               </p>
                             </div>
                             <ChevronRight className="h-5 w-5 text-muted-foreground transition-transform group-hover:translate-x-1" />
@@ -312,18 +314,18 @@ const UserHistory = () => {
 
                         <div className="mt-4 grid gap-3 sm:grid-cols-3">
                           <div className="rounded-2xl bg-muted/40 p-3">
-                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Prediction dominante</p>
+                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Diagnostic</p>
+                            <p className="mt-1 text-sm font-semibold text-foreground">{scan.prediction}</p>
+                          </div>
+                          <div className="rounded-2xl bg-muted/40 p-3">
+                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Statut</p>
+                            <p className="mt-1 text-sm font-semibold text-foreground">{(scan.status === "reviewed" ? "Validé par votre médecin" : "En attente de validation")}</p>
+                          </div>
+                          <div className="rounded-2xl bg-muted/40 p-3">
+                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Validé le</p>
                             <p className="mt-1 text-sm font-semibold text-foreground">
-                              {topProbability?.[0] ?? scan.prediction}
+                              {scan.reviewedAt ? new Date(scan.reviewedAt).toLocaleDateString("fr-FR") : "—"}
                             </p>
-                          </div>
-                          <div className="rounded-2xl bg-muted/40 p-3">
-                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Modele</p>
-                            <p className="mt-1 text-sm font-semibold text-foreground">{scan.bestModel ?? "Analyse globale"}</p>
-                          </div>
-                          <div className="rounded-2xl bg-muted/40 p-3">
-                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Modeles compares</p>
-                            <p className="mt-1 text-sm font-semibold text-foreground">{scan.totalModels ?? 1}</p>
                           </div>
                         </div>
                       </div>
@@ -352,7 +354,7 @@ const UserHistory = () => {
                 <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
                   <p className="text-sm font-semibold text-foreground">Ouvrir un detail</p>
                   <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                    Cliquez sur une carte pour voir la prediction complete, les probabilites et les informations IA.
+                    Cliquez sur une IRM pour voir le diagnostic et le commentaire de votre médecin.
                   </p>
                 </div>
               </div>

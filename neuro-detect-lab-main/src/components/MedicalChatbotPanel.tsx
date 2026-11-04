@@ -43,8 +43,8 @@ interface MedicalChatbotPanelProps {
 }
 
 const MedicalChatbotPanel = ({
-  title = "Assistant Medical IA",
-  subtitle = "Chatbot Alzheimer integre a votre projet",
+  title = "Assistant FAQ Alzheimer",
+  subtitle = "Réponses tirées d'une FAQ vérifiée (règles et mots-clés, pas un médecin)",
   className,
   extraSuggestions = [],
 }: MedicalChatbotPanelProps) => {
@@ -201,9 +201,8 @@ const MedicalChatbotPanel = ({
                         <div className="flex items-center gap-1.5">
                           <ShieldAlert className="h-3.5 w-3.5" />
                           <span>Source: {message.meta.source}</span>
-                          {typeof message.meta.confidence === "number" && (
-                            <span>| confiance {(message.meta.confidence * 100).toFixed(0)}%</span>
-                          )}
+                          {/* No "confidence %": these values are fixed constants of keyword rules / word overlap
+                              with the FAQ, not a medical confidence. Showing "100%" would overclaim. */}
                         </div>
                       )}
                       {message.meta.disclaimer && <p>{message.meta.disclaimer}</p>}

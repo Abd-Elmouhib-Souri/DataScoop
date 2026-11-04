@@ -22,9 +22,11 @@ const riskBadge: Record<string, string> = {
   Low: "bg-severity-healthy/10 text-severity-healthy",
   Medium: "bg-severity-mild/10 text-severity-mild",
   High: "bg-severity-severe/10 text-severity-severe",
+  Pending: "bg-muted text-muted-foreground",
 };
 
-const getRiskLevel = (prediction: string): string => {
+// Risk from the diagnosis VALIDATED by the doctor; none yet -> "Pending" (never guessed)
+const getRiskLevel = (prediction?: string | null): string => {
   switch (prediction) {
     case "Non Demented":
       return "Low";
@@ -36,7 +38,7 @@ const getRiskLevel = (prediction: string): string => {
     case "Severe Demented":
       return "High";
     default:
-      return "Medium";
+      return "Pending";
   }
 };
 
@@ -123,6 +125,7 @@ const PatientManagement = () => {
                   <option value="low">Low</option>
                   <option value="medium">Medium</option>
                   <option value="high">High</option>
+                  <option value="pending">En attente</option>
                 </select>
               </div>
               <div className="flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2">

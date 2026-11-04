@@ -1,3 +1,4 @@
+import { formatDoctorName } from "@/lib/utils";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { motion } from "framer-motion";
 import {
@@ -1119,9 +1120,10 @@ const Reports = () => {
   const [reanalyzingPatientId, setReanalyzingPatientId] = useState<string | null>(null);
   const reportRef = useRef<HTMLDivElement>(null);
 
+  // Only the logged-in doctor: reports cover HIS patients (other doctors' patients are private)
   const { data: doctors = [], isLoading: doctorsLoading, error: doctorsError } = useQuery({
     queryKey: ["doctors", user?.token],
-    queryFn: () => getDoctors(user?.token || ""),
+    queryFn: async () => (await getDoctors(user?.token || "")).filter((d) => d._id === user?.id),
     enabled: !!user?.token,
   });
 
@@ -1184,7 +1186,7 @@ const Reports = () => {
   const predictionCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     (allPatients as Patient[]).forEach((p) => {
-      const key = p.prediction || "Non Demented";
+      const key = p.prediction || "En attente";   // no validated diagnosis: never counted as healthy
       counts[key] = (counts[key] || 0) + 1;
     });
     return counts;
@@ -1670,7 +1672,7 @@ const Reports = () => {
                   <div style="font-size:24px;font-weight:900;color:#0f172a">${escapeHtml(bestModel ?? topProbabilityLabel ?? "Details de comparaison non enregistres")}</div>
                   <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px">
                     <div style="padding:12px 14px;border-radius:16px;background:#eff6ff;border:1px solid #bfdbfe">
-                      <div style="font-size:11px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:#1d4ed8;margin-bottom:4px">Meilleur score</div>
+                      <div style="font-size:11px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:#1d4ed8;margin-bottom:4px">Modele principal</div>
                       <div style="font-size:22px;font-weight:900;color:#0f172a">${bestScore != null ? `${(bestScore * 100).toFixed(1)}%` : (topProbabilityValue != null ? `${(topProbabilityValue * 100).toFixed(1)}%` : "N/A")}</div>
                     </div>
                     <div style="padding:12px 14px;border-radius:16px;background:#f8fafc;border:1px solid #e2e8f0">
@@ -1778,7 +1780,7 @@ const Reports = () => {
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <title>Rapport - Dr. ${escapeHtml(selectedDoctor?.username ?? "")}</title>
+  <title>Rapport - ${escapeHtml(formatDoctorName(selectedDoctor?.username))}</title>
   <style>
     * { box-sizing: border-box; }
     body { font-family: Arial, sans-serif; padding: 28px; color: #111827; background: linear-gradient(180deg, #eaf1ff 0%, #f8fafc 35%, #ffffff 100%); line-height: 1.5; }
@@ -1796,7 +1798,7 @@ const Reports = () => {
     <div>
       <div style="font-size:12px;letter-spacing:0.16em;text-transform:uppercase;opacity:0.7">DataScoop</div>
       <h1 style="margin:6px 0 8px 0;font-size:34px">Rapport clinique IA</h1>
-      <p style="margin:0;font-size:14px;opacity:0.9">Dr. ${escapeHtml(selectedDoctor?.username ?? "")} • ${escapeHtml(selectedDoctor?.email ?? "")}</p>
+      <p style="margin:0;font-size:14px;opacity:0.9">${escapeHtml(formatDoctorName(selectedDoctor?.username))} • ${escapeHtml(selectedDoctor?.email ?? "")}</p>
       <p style="margin:6px 0 0 0;font-size:13px;opacity:0.75">${patients.length} patient(s) • ${escapeHtml(now.toLocaleDateString("fr-FR"))}</p>
     </div>
     <button onclick="window.print()">Imprimer</button>
@@ -1964,20 +1966,7 @@ const Reports = () => {
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="rounded-xl gap-2"
-            disabled={isRepairing}
-            onClick={handleRepairLinks}
-            title={repairMojibake("Répare les images manquantes en liant les dossiers patients aux comptes utilisateurs")}
-          >
-            {isRepairing
-              ? <Loader2 className="h-4 w-4 animate-spin" />
-              : <RefreshCw className="h-4 w-4" />}
-            {isRepairing ? repairMojibake("Réparation...") : repairMojibake("Réparer les images")}
-          </Button>
+          {/* "Réparer les images" removed: records are linked by account only, nothing to repair */}
           <Button
             type="button"
             variant="outline"
@@ -2077,7 +2066,7 @@ const Reports = () => {
                 <FileText className="h-6 w-6 text-primary" />
               </div>
               <div>
-                <h4 className="font-semibold text-foreground">Dr. {selectedDoctor.username}</h4>
+                <h4 className="font-semibold text-foreground">{formatDoctorName(selectedDoctor.username)}</h4>
                 <p className="text-xs text-muted-foreground">{selectedDoctor.email}</p>
               </div>
               <div className="ml-auto flex items-center gap-1.5">

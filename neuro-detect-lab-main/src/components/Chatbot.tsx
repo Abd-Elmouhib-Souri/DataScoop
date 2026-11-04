@@ -31,8 +31,8 @@ const Chatbot: React.FC<ChatbotProps> = ({ isOpen, onClose }) => {
             <X className="h-4 w-4" />
           </Button>
           <MedicalChatbotPanel
-            title="Assistant Medical IA"
-            subtitle="Chatbot Alzheimer disponible partout dans l'application"
+            title="Assistant FAQ Alzheimer"
+            subtitle="Réponses tirées d'une FAQ vérifiée (règles et mots-clés, pas un médecin)"
             className="h-full rounded-lg border-0 shadow-none"
           />
         </motion.div>

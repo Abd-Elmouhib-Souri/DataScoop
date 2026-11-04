@@ -24,7 +24,7 @@ const userNav = [
   { title: "Journal", url: "/patient/journal", icon: NotebookPen },
   { title: "Conversations", url: "/patient/conversations", icon: MessageCircle },
   { title: "Learn more", url: "/patient/learn-more", icon: BookOpen },
-  { title: "AI Chatbot", url: "/patient/chatbot", icon: Bot },
+  { title: "Assistant FAQ", url: "/patient/chatbot", icon: Bot },
   { title: "Profile", url: "/patient/profile", icon: User },
 ];
 
@@ -32,7 +32,7 @@ const doctorNav = [
   { title: "Overview", url: "/doctor", icon: LayoutDashboard },
   { title: "Patients", url: "/doctor/patients", icon: Users },
   { title: "Conversations", url: "/doctor/conversations", icon: MessageCircle },
-  { title: "AI Chatbot", url: "/doctor/chatbot", icon: Bot },
+  { title: "Assistant FAQ", url: "/doctor/chatbot", icon: Bot },
   { title: "Analysis", url: "/doctor/analysis", icon: Scan },
   { title: "AI Insights", url: "/doctor/insights", icon: BarChart3 },
   { title: "Reports", url: "/doctor/reports", icon: FileText },
@@ -51,7 +51,7 @@ export function AppSidebar() {
           <SidebarGroupLabel>
             <div className="flex items-center gap-2">
               <Brain className="h-4 w-4 text-primary" />
-              {!collapsed && <span className="font-display text-xs font-bold">AlzDetect<span className="text-primary">AI</span></span>}
+              {!collapsed && <span className="font-display text-xs font-bold">Data<span className="text-primary">Scoop</span></span>}
             </div>
           </SidebarGroupLabel>
           <SidebarGroupContent>

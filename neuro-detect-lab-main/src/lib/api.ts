@@ -242,6 +242,7 @@ export interface Conversation {
   };
   createdAt: string;
   updatedAt: string;
+  messages?: Message[];   // optional: present when the API embeds them (unread counter)
 }
 
 export interface Message {
@@ -683,6 +684,13 @@ export const getPatientsByDoctor = async (doctorId: string, token: string): Prom
   return data;
 };
 
+/** Account of one of MY patients (as returned by /users/patient-users). */
+export interface User {
+  _id: string;
+  username: string;
+  email: string;
+}
+
 export const getPatientUsers = async (token: string): Promise<User[]> => {
   const { data } = await axios.get(`${API_BASE}/users/patient-users`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -690,3 +698,46 @@ export const getPatientUsers = async (token: string): Promise<User[]> => {
   return data;
 };
 
+
+// ---------------- Human-in-the-loop review (doctor validates the AI suggestion) ----------------
+
+/** What the PATIENT receives after an upload: no AI output, the scan waits for his doctor. */
+export interface PendingReviewResponse {
+  status: "pending_review";
+  scanDate: string;
+  sentToDoctor: boolean;
+  message: string;
+}
+
+export interface PendingReviewItem {
+  patientId: string;
+  patientName: string;
+  historyId: string;
+  date: string;
+  aiPrediction: string;
+  probabilities: Record<string, number>;
+  allModels: Record<string, { prediction: string; confidence: number }>;
+  bestModel: string | null;
+  irmImage: string | null;
+}
+
+/** Scans of MY patients that wait for my review (doctor only). */
+export const getPendingReviews = async (token: string): Promise<PendingReviewItem[]> => {
+  const { data } = await axios.get(`${API_BASE}/patients/reviews/pending`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return data;
+};
+
+/** Validate the AI suggestion, or correct it with another class, plus an optional comment for the patient. */
+export const reviewScan = async (
+  patientId: string,
+  historyId: string,
+  payload: { decision: "validated" | "corrected"; finalDiagnosis?: string; comment?: string },
+  token: string
+) => {
+  const { data } = await axios.post(`${API_BASE}/patients/${patientId}/reviews/${historyId}`, payload, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return data;
+};

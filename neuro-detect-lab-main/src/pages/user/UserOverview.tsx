@@ -61,6 +61,8 @@ interface ScanRecord {
   explanation: string;
   createdAt?: string;
   bestModel?: string | null;
+  status?: "pending_review" | "reviewed";   // patient view: diagnosis only after the doctor's review
+  reviewedAt?: string | null;
   allModels?: Record<string, unknown>;
   rankedModels?: string[];
   totalModels?: number;
@@ -198,6 +200,12 @@ const riskConfig: Record<string, { color: string; bg: string; icon: React.ReactN
     icon: <Activity className="h-5 w-5" />,
     summary: "A follow-up and close monitoring would help track any progression early.",
   },
+  Unknown: {
+    color: "text-muted-foreground",
+    bg: "bg-muted/40",
+    icon: <Activity className="h-5 w-5" />,
+    summary: "No analysed scan yet: no risk level can be estimated.",
+  },
   High: {
     color: "text-severity-severe",
     bg: "bg-severity-severe/10",
@@ -231,7 +239,7 @@ const getRiskLevel = (prediction: string): string => {
     case "Severe Demented":
       return "High";
     default:
-      return "Medium";
+      return "Unknown"; // unknown class -> no invented risk
   }
 };
 
@@ -526,15 +534,19 @@ const UserOverview = () => {
     (a, b) => new Date(b.date || b.createdAt || "").getTime() - new Date(a.date || a.createdAt || "").getTime()
   );
   const lastScan = sortedScans[0] ?? null;
-  const risk = lastScan ? getRiskLevel(lastScan.prediction) : "Medium";
+  // Risk only from a diagnosis VALIDATED by the doctor (a pending scan or no scan -> "Unknown", never invented)
+  const lastReviewed = sortedScans.find((s) => s.status === "reviewed") ?? null;
+  const risk = lastReviewed ? getRiskLevel(lastReviewed.prediction) : "Unknown";
   const cfg = riskConfig[risk];
   const topProbability = getTopProbability(lastScan?.probabilities);
-  const dynamicIrmSummary = getDynamicIrmSummary(lastScan?.prediction, lastScan?.explanation);
-  const dynamicRiskLabel = getDynamicRiskLabel(lastScan?.prediction);
+  // Advice, guides and journal follow the last diagnosis VALIDATED by the doctor, never a pending scan
+  const advicePrediction = lastReviewed?.prediction;
+  const dynamicIrmSummary = getDynamicIrmSummary(advicePrediction, lastReviewed?.explanation);
+  const dynamicRiskLabel = getDynamicRiskLabel(advicePrediction);
   const journalQueryKey = useMemo(() => ["patient-journal-preview", user?.token], [user?.token]);
-  const suggestedExercises = getSuggestedExercises(lastScan?.prediction);
-  const caregiverAdvice = getCaregiverAdvice(lastScan?.prediction);
-  const guideLinks = GUIDE_LINKS[lastScan?.prediction ?? ""] ?? GUIDE_LINKS["Non Demented"];
+  const suggestedExercises = getSuggestedExercises(advicePrediction);
+  const caregiverAdvice = getCaregiverAdvice(advicePrediction);
+  const guideLinks = GUIDE_LINKS[advicePrediction ?? ""] ?? GUIDE_LINKS["Non Demented"];
   const quickSummaryItems = [
     {
       label: "Derniere prediction",
@@ -549,9 +561,9 @@ const UserOverview = () => {
       icon: <CalendarClock className="h-4 w-4 text-primary" />,
     },
     {
-      label: "Modele retenu",
-      value: lastScan?.bestModel ?? "Analyse globale",
-      hint: lastScan?.totalModels ? `${lastScan.totalModels} modeles compares pour ce scan` : "Visible apres une analyse multi-modele complete",
+      label: "Statut",
+      value: !lastScan ? "Aucune IRM" : lastScan.status === "reviewed" ? "Validé" : "En attente",
+      hint: lastScan?.status === "reviewed" ? "Diagnostic validé par votre médecin" : "Votre médecin doit encore examiner l'IRM",
       icon: <Target className="h-4 w-4 text-primary" />,
     },
     {
@@ -668,7 +680,7 @@ const UserOverview = () => {
 
   const saveJournalEntry = () => {
     const entry: Omit<JournalEntry, "id" | "createdAt"> = {
-      scanPrediction: lastScan?.prediction ?? "Aucun scan",
+      scanPrediction: advicePrediction ?? "Aucun diagnostic validé",
       memory: journalForm.forgetfulness,
       autonomy: "Bonne",
       riskLevel: risk,
@@ -1076,23 +1088,23 @@ const UserOverview = () => {
 
             <div className="grid gap-3 sm:grid-cols-3">
               <div className={innerCardClass}>
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Prediction dominante</p>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Diagnostic du médecin</p>
                 <p className="mt-2 text-sm font-semibold text-foreground">
-                  {topProbability?.[0] ?? lastScan?.prediction ?? "Indisponible"}
+                  {lastScan?.status === "reviewed" ? lastScan.prediction : "En attente"}
                 </p>
               </div>
 
               <div className={innerCardClass}>
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Confiance principale</p>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Statut</p>
                 <p className="mt-2 text-sm font-semibold text-foreground">
-                  {topProbability ? `${(topProbability[1] * 100).toFixed(1)}%` : "Indisponible"}
+                  {!lastScan ? "Aucune IRM" : lastScan.status === "reviewed" ? "Validé" : "En attente de validation"}
                 </p>
               </div>
 
               <div className={innerCardClass}>
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Comparaison IA</p>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Validé le</p>
                 <p className="mt-2 text-sm font-semibold text-foreground">
-                  {lastScan?.totalModels ? `${lastScan.totalModels} modeles analyses` : "Analyse en cours"}
+                  {lastScan?.reviewedAt ? new Date(lastScan.reviewedAt).toLocaleDateString("fr-FR") : "—"}
                 </p>
               </div>
             </div>
@@ -1495,7 +1507,7 @@ const UserOverview = () => {
             </p>
           </div>
           <div className="rounded-full border border-border px-3 py-1 text-xs font-medium text-muted-foreground">
-            Base sur {lastScan?.prediction ?? "le prochain scan IRM"}
+            Base sur {advicePrediction ?? "aucun diagnostic validé"}
           </div>
         </div>
 
@@ -1588,7 +1600,7 @@ const UserOverview = () => {
               <p className="text-sm font-semibold text-primary">Repere clinique courant</p>
               <p className="mt-1 text-sm text-foreground">
                 Les symptomes notes ici sont interpretes avec le dernier resultat IRM:{" "}
-                <span className="font-semibold">{lastScan?.prediction ?? "aucun scan disponible"}</span>.
+                <span className="font-semibold">{advicePrediction ?? "aucun diagnostic validé"}</span>.
               </p>
             </div>
 
@@ -1678,7 +1690,7 @@ const UserOverview = () => {
             <p className="text-sm leading-6 text-foreground">{caregiverAdvice.communication}</p>
             <p className="mt-4 text-xs leading-5 text-muted-foreground">
               Ces conseils suivent le contexte de la derniere IRM:{" "}
-              <span className="font-semibold text-foreground">{lastScan?.prediction ?? "aucun scan disponible"}</span>.
+              <span className="font-semibold text-foreground">{advicePrediction ?? "aucun diagnostic validé"}</span>.
             </p>
           </div>
         </div>
@@ -1699,7 +1711,7 @@ const UserOverview = () => {
             </p>
           </div>
           <div className="rounded-full border border-border px-3 py-1 text-xs font-medium text-muted-foreground">
-            Base sur {lastScan?.prediction ?? "le dernier scan disponible"}
+            Base sur {advicePrediction ?? "aucun diagnostic validé"}
           </div>
         </div>
 

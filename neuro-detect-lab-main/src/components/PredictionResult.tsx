@@ -171,7 +171,7 @@ const BestModelHighlight = ({
         <div>
           <div className="inline-flex items-center gap-2 rounded-full bg-primary px-2.5 py-1 text-xs font-bold text-primary-foreground">
             <Trophy className="h-3.5 w-3.5" />
-            Modele le plus performant
+            Modele principal (choisi a l'avance)
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <span className="text-base font-semibold text-foreground">{modelName}</span>
@@ -186,7 +186,7 @@ const BestModelHighlight = ({
         </div>
 
         <div className="text-right">
-          <div className="text-xs uppercase tracking-wide text-muted-foreground">Confiance</div>
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">Confiance (non calibree)</div>
           <div className={`text-2xl font-bold ${cfg.color}`}>{(result.confidence * 100).toFixed(1)}%</div>
           <div className="mt-1 text-xs text-muted-foreground">{result.inference_time_ms} ms</div>
         </div>
@@ -207,7 +207,7 @@ const ModelSummaryTable = ({
   <div className="space-y-3 rounded-2xl border border-border bg-card p-5 shadow-card">
     <div className="flex items-center justify-between gap-3">
       <h4 className="text-sm font-semibold text-foreground">Predictions et pourcentages de tous les modeles</h4>
-      <span className="text-xs text-muted-foreground">Classement compare sur cette IRM</span>
+      <span className="text-xs text-muted-foreground">Ordre fixe : macro-F1 mesure (pas la confiance)</span>
     </div>
 
     <div className="overflow-hidden rounded-xl border border-border/70">
@@ -296,7 +296,7 @@ const ModelCard = ({
             </span>
             {isBest && (
               <span className="inline-flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-xs font-bold text-primary-foreground">
-                <Trophy className="h-3 w-3" /> Meilleur score
+                <Trophy className="h-3 w-3" /> Principal
               </span>
             )}
             {result.mode === "real" ? (
@@ -363,6 +363,12 @@ const PredictionResult = ({ data }: { data: PredictionResponse }) => {
     0;
   const bestResult = bestModel ? allModels[bestModel] : undefined;
   const bestConfidence = bestResult ? (bestResult.confidence * 100).toFixed(1) : null;
+  // Distinct predicted classes among the models that really answered
+  const distinctPredictions = Array.from(new Set(Object.values(allModels ?? {}).map((r) => r?.prediction).filter(Boolean)));
+  const modelsDisagree = distinctPredictions.length > 1;
+  const disagreementText = Object.entries(allModels ?? {})
+    .map(([name, r]) => `${name} : ${r?.prediction}`)
+    .join(", ");
   const summaryText = bestResult?.description ?? cfg.text;
 
   return (
@@ -386,11 +392,21 @@ const PredictionResult = ({ data }: { data: PredictionResponse }) => {
             <p className="text-sm text-muted-foreground">{summaryText}</p>
             {bestModel && bestConfidence && (
               <p className="mt-2 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs font-medium text-primary">
-                Pour cette IRM, tous les modeles sont testes puis compares. Le resultat final retenu vient de{" "}
-                <span className="font-semibold">{bestModel}</span>, qui a obtenu la meilleure performance sur
-                cette image avec <span className="font-semibold">{bestConfidence}%</span> de confiance.
+                Verdict du modele principal <span className="font-semibold">{bestModel}</span>, choisi a l'avance
+                (meilleur macro-F1 mesure sans fuite de donnees), avec {bestConfidence}% de confiance non calibree.
               </p>
             )}
+            {/* Disagreement = the models predict different classes -> the result is uncertain */}
+            {modelsDisagree && (
+              <p className="mt-2 rounded-xl border border-amber-400/60 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+                Attention : les modeles ne sont pas d'accord ({disagreementText}). Resultat incertain, a interpreter avec prudence.
+              </p>
+            )}
+            {/* Scope warning: a classifier ALWAYS answers, even outside its training domain */}
+            <p className="mt-2 rounded-xl border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
+              Domaine de validite : coupes IRM 2D au format du jeu d'entrainement (Kaggle). Une image d'une autre source
+              (capture d'ecran, autre sequence comme FLAIR, figure d'article) peut recevoir une confiance elevee et fausse.
+            </p>
             {data.explanation && (
               <p className="mt-2 border-t border-border/50 pt-2 text-xs italic text-muted-foreground">
                 {data.explanation}
@@ -487,7 +503,7 @@ const PredictionResult = ({ data }: { data: PredictionResponse }) => {
               <Trophy className="h-4 w-4 text-primary" />
               Classement des modeles IA
             </h4>
-            <span className="text-xs text-muted-foreground">Tries par confiance decroissante</span>
+            <span className="text-xs text-muted-foreground">Ordre fixe par macro-F1 mesure, pas par confiance</span>
           </div>
 
           {rankedNames.map((name, idx) => {

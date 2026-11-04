@@ -14,6 +14,7 @@ const RegisterPage = () => {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");   // typing it twice catches typos before the account exists
   const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState<UserRole>("user");
   const [doctorKey, setDoctorKey] = useState("");
@@ -23,6 +24,10 @@ const RegisterPage = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !email) { toast.error("All fields required"); return; }
+    // Same rules as the server (which re-checks them): 8+ characters, both entries identical
+    if (password.length < 8) { toast.error("Mot de passe : 8 caractères minimum"); return; }
+    if (password !== confirmPassword) { toast.error("Les deux mots de passe ne correspondent pas"); return; }
+    if (role === "doctor" && !doctorKey.trim()) { toast.error("Code d'invitation médecin requis"); return; }
     setLoading(true);
     try {
       await register(name, email, password, role, doctorKey);
@@ -48,7 +53,7 @@ const RegisterPage = () => {
             <Brain className="h-6 w-6 text-primary-foreground" />
           </div>
           <h1 className="font-display text-xl font-bold text-foreground">Create Account</h1>
-          <p className="text-xs text-muted-foreground">Join the AlzDetectAI platform</p>
+          <p className="text-xs text-muted-foreground">Join the DataScoop platform</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -80,6 +85,19 @@ const RegisterPage = () => {
             </div>
           </div>
           <div className="space-y-1.5">
+            <Label className="text-xs font-medium text-foreground">Confirmer le mot de passe</Label>
+            <Input
+              type={showPassword ? "text" : "password"}
+              placeholder="••••••••"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              className="rounded-xl"
+            />
+            {confirmPassword && confirmPassword !== password && (
+              <p className="text-[11px] text-destructive">Les mots de passe ne correspondent pas.</p>
+            )}
+          </div>
+          <div className="space-y-1.5">
             <Label className="text-xs font-medium text-foreground">I am a…</Label>
             <div className="grid grid-cols-2 gap-3">
               {(["user", "doctor"] as UserRole[]).map((r) => (
@@ -102,7 +120,7 @@ const RegisterPage = () => {
           {/* Champ Clé Secrète - Version Pro */}
           {role === "doctor" && (
             <div className="space-y-1.5 p-3 rounded-xl border border-primary/30 bg-primary/5 animate-in fade-in zoom-in duration-300">
-              <Label className="text-xs font-semibold text-primary">Doctor Secret Key</Label>
+              <Label className="text-xs font-semibold text-primary">Code d'invitation médecin</Label>
               <div className="relative">
                 <Input 
                   type={showDoctorKey ? "text" : "password"} 
@@ -119,7 +137,7 @@ const RegisterPage = () => {
                   {showDoctorKey ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
-              <p className="text-[10px] text-muted-foreground italic">Verification key required for medical registration.</p>
+              <p className="text-[10px] text-muted-foreground italic">Code à usage unique fourni par l'administrateur de la plateforme.</p>
             </div>
           )}
 

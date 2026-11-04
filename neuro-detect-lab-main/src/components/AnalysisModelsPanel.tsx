@@ -40,11 +40,11 @@ const AnalysisModelsPanel = () => {
           </div>
           <div className="flex items-center gap-2">
             <ScanSearch className="h-4 w-4 text-primary" />
-            <span>Classement par confiance</span>
+            <span>Ordre fixe par mesure</span>
           </div>
           <div className="flex items-center gap-2">
             <BrainCircuit className="h-4 w-4 text-primary" />
-            <span>Resultat final automatique</span>
+            <span>Desaccords signales</span>
           </div>
         </div>
       </div>

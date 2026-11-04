@@ -1,6 +1,6 @@
 {
   "appId": "com.neurodetectlab.app",
-  "appName": "NeuroDetect Lab",
+  "appName": "DataScoop",
   "webDir": "dist",
   "bundledWebRuntime": false,
   "server": {

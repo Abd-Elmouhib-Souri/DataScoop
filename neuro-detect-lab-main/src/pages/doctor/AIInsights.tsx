@@ -11,8 +11,10 @@ import { Loader2 } from "lucide-react";
 
 const tooltipStyle = { borderRadius: "0.75rem", border: "1px solid hsl(214,20%,90%)", fontSize: "0.75rem" };
 
-const getPredictionCategory = (prediction?: string) => {
-  const normalized = String(prediction || "").toLowerCase();
+// Category of the VALIDATED diagnosis (patients without one are counted as "En attente", never as healthy)
+const getPredictionCategory = (prediction?: string | null) => {
+  if (!prediction) return "En attente";
+  const normalized = String(prediction).toLowerCase();
   if (normalized.includes("very mild")) return "Very Mild";
   if (normalized.includes("mild")) return "Mild";
   if (normalized.includes("moderate")) return "Moderate";
@@ -89,6 +91,7 @@ const AIInsights = () => {
       "Very Mild": 0,
       "Mild": 0,
       "Moderate": 0,
+      "En attente": 0,
     };
 
     patients.forEach((patient: any) => {
@@ -101,6 +104,7 @@ const AIInsights = () => {
       { name: "Very Mild", value: dist["Very Mild"], color: "hsl(48,96%,53%)" },
       { name: "Mild", value: dist["Mild"], color: "hsl(25,95%,53%)" },
       { name: "Moderate", value: dist["Moderate"], color: "hsl(0,72%,51%)" },
+      { name: "En attente", value: dist["En attente"], color: "hsl(215,16%,65%)" },
     ];
   }, [patients]);
 

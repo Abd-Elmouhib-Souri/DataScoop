@@ -6,11 +6,11 @@ const Footer = () => (
       <div className="flex items-center gap-2">
         <Brain className="h-5 w-5 text-primary" />
         <span className="font-display text-sm font-semibold text-foreground">
-          AlzDetectAI
+          DataScoop
         </span>
       </div>
       <p className="text-xs text-muted-foreground">
-        © {new Date().getFullYear()} AlzDetectAI. For research purposes only — not a clinical diagnostic tool.
+        © {new Date().getFullYear()} DataScoop. For research purposes only — not a clinical diagnostic tool.
       </p>
     </div>
   </footer>

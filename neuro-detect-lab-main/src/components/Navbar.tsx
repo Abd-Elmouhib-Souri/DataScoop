@@ -21,7 +21,7 @@ const Navbar = () => {
             <Brain className="h-5 w-5 text-primary-foreground" />
           </div>
           <span className="font-display text-lg font-bold text-foreground">
-            AlzDetect<span className="text-primary">AI</span>
+            Data<span className="text-primary">Scoop</span>
           </span>
         </Link>
 

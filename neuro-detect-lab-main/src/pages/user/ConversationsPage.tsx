@@ -1,3 +1,4 @@
+import { formatDoctorName } from "@/lib/utils";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -349,7 +350,7 @@ const ConversationsPage = () => {
                 <>
                   {conversations.map((conversation) => {
                     const unreadCount = conversation.messages?.filter(
-                      (msg) => !msg.isRead && msg.sender !== user?.id
+                      (msg) => !msg.isRead && msg.sender?._id !== user?.id   // sender is a populated user object, compare its id
                     ).length || 0;
 
                     return (
@@ -376,7 +377,7 @@ const ConversationsPage = () => {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between mb-1">
                               <p className="font-semibold text-foreground truncate">
-                                Dr. {conversation.doctor.username}
+                                {formatDoctorName(conversation.doctor.username)}
                               </p>
                               <div className="flex items-center gap-2">
                                 {conversation.lastMessage && (
@@ -472,7 +473,7 @@ const ConversationsPage = () => {
                       </div>
                       <div className="flex-1">
                         <p className="font-semibold text-foreground group-hover:text-primary transition-colors">
-                          Dr. {doctor.username}
+                          {formatDoctorName(doctor.username)}
                         </p>
                         <p className="text-sm text-muted-foreground">{doctor.email}</p>
                         <p className="text-xs text-green-600 mt-1">✓ Disponible</p>
@@ -501,7 +502,7 @@ const ConversationsPage = () => {
                   </div>
                   <div>
                     <p className="font-semibold text-foreground">
-                      Dr. {selectedConversation.doctor.username || 'Médecin'}
+                      {formatDoctorName(selectedConversation.doctor.username)}
                     </p>
                     <p className="text-sm text-muted-foreground flex items-center gap-2">
                       <Circle className="h-2 w-2 fill-green-500 text-green-500 animate-pulse" />
@@ -616,7 +617,7 @@ const ConversationsPage = () => {
                         <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
                         <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
                       </div>
-                      <span>Dr. {selectedConversation?.doctor.username} tape un message...</span>
+                      <span>{formatDoctorName(selectedConversation?.doctor.username)} tape un message...</span>
                     </motion.div>
                   )}
                   <div className="flex items-end gap-3">
@@ -716,7 +717,7 @@ const ConversationsPage = () => {
                           </AvatarFallback>
                         </Avatar>
                         <div>
-                          <p className="font-medium">Dr. {doctor.username}</p>
+                          <p className="font-medium">{formatDoctorName(doctor.username)}</p>
                           <p className="text-sm text-muted-foreground">{doctor.email}</p>
                         </div>
                       </div>

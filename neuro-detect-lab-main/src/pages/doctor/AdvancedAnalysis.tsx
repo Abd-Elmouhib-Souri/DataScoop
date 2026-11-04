@@ -35,7 +35,7 @@ const AdvancedAnalysis = () => {
     <div className="p-6">
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
         <h1 className="font-display text-2xl font-bold text-foreground">Advanced Analysis</h1>
-        <p className="text-sm text-muted-foreground mt-1">Upload a 2D MRI slice for a research-grade multi-model analysis (not a medical device).</p>
+        <p className="text-sm text-muted-foreground mt-1">Analyse ponctuelle d'une coupe IRM 2D (prototype de recherche, pas un dispositif médical). Elle n'est enregistrée dans aucun dossier : les IRM de vos patients arrivent dans leur dossier, onglet Patients.</p>
       </motion.div>
 
       {result ? (

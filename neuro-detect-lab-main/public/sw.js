@@ -1,4 +1,4 @@
-const CACHE_NAME = "neurodetect-shell-v1";
+const CACHE_NAME = "datascoop-shell-v2"; // new name -> old caches are deleted on activate
 const APP_SHELL = ["./", "./index.html", "./manifest.webmanifest", "./pwa-icon.svg", "./maskable-icon.svg"];
 
 self.addEventListener("install", (event) => {

@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">NeuroDetect Lab</string>
-    <string name="title_activity_main">NeuroDetect Lab</string>
+    <string name="app_name">DataScoop</string>
+    <string name="title_activity_main">DataScoop</string>
     <string name="package_name">com.neurodetectlab.app</string>
     <string name="custom_url_scheme">com.neurodetectlab.app</string>
 </resources>

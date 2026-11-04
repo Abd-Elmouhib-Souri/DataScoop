@@ -1,9 +1,10 @@
 import { motion } from "framer-motion";
-import { Users, ScanLine, Activity, TrendingUp, Loader2 } from "lucide-react";
+import { Users, ScanLine, Activity, TrendingUp, Loader2, ClipboardCheck } from "lucide-react";
+import { Link } from "react-router-dom";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery } from "@tanstack/react-query";
-import { getPatientUsers, getPatients, getHistory } from "@/lib/api";
+import { getPatientUsers, getPatients, getHistory, getPendingReviews } from "@/lib/api";
 import { toast } from "sonner";
 
 interface PatientUser {
@@ -17,7 +18,10 @@ interface PatientRecord {
   name: string;
   age: number;
   symptoms: string[];
-  prediction: string;
+  prediction: string | null;      // diagnosis VALIDATED by a doctor (null: none yet)
+  aiPrediction?: string | null;   // raw AI suggestion (never counted in the charts)
+  reviewStatus?: "reviewed" | "pending" | "none";
+  pendingReviews?: number;
   createdAt: string;
 }
 
@@ -31,7 +35,8 @@ interface ScanRecord {
   createdAt?: string;
 }
 
-const getRiskLevel = (prediction: string): string => {
+// Risk from the VALIDATED diagnosis only; no validated diagnosis -> "Pending" (never guessed)
+const getRiskLevel = (prediction?: string | null): string => {
   switch (prediction) {
     case "Non Demented":
       return "Low";
@@ -43,9 +48,10 @@ const getRiskLevel = (prediction: string): string => {
     case "Severe Demented":
       return "High";
     default:
-      return "Medium";
+      return "Pending";
   }
 };
+const RISK_LABEL: Record<string, string> = { High: "Élevé", Medium: "Moyen", Low: "Faible", Pending: "En attente" };
 
 const StatCard = ({ icon, label, value, delay }: { icon: React.ReactNode; label: string; value: string; delay: number }) => (
   <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay }}
@@ -81,27 +87,38 @@ const DoctorOverview = () => {
     enabled: !!user?.token,
   });
 
+  // Scans of MY patients waiting for my validation (human-in-the-loop)
+  const { data: pendingReviews = [] } = useQuery({
+    queryKey: ["pending-reviews", user?.token],
+    queryFn: () => getPendingReviews(user?.token || ""),
+    enabled: !!user?.token,
+  });
+
   if (usersError || patientsError || scansError) {
     toast.error("Failed to load dashboard data");
   }
 
   const isLoading = usersLoading || patientsLoading || scansLoading;
 
-  // Distribution COUNTED from the patients' stored predictions (the old chart used Math.random)
+  // Distribution of the diagnoses VALIDATED by the doctor (not the AI suggestions).
+  // Patients with no validated diagnosis yet but a scan waiting are counted as "En attente".
   const countPrediction = (label: string) =>
     (patients as PatientRecord[]).filter((patient) => patient.prediction === label).length;
+  const countPending = (patients as PatientRecord[]).filter((p) => !p.prediction && p.reviewStatus === "pending").length;
   const distribution = [
     { name: "Non Demented", value: countPrediction("Non Demented"), color: "hsl(142,71%,45%)" },
     { name: "Very Mild", value: countPrediction("Very Mild Demented"), color: "hsl(48,96%,53%)" },
     { name: "Mild", value: countPrediction("Mild Demented"), color: "hsl(25,95%,53%)" },
     { name: "Moderate", value: countPrediction("Moderate Demented"), color: "hsl(0,72%,51%)" },
+    { name: "En attente", value: countPending, color: "hsl(215,16%,65%)" },
   ];
 
   const highRiskCount = (patients as PatientRecord[]).filter((patient) => getRiskLevel(patient.prediction) === "High").length;
   const recentPatients = patients.slice(0, 4);
   const prioritizedPatients = [...(patients as PatientRecord[])]
     .sort((left, right) => {
-      const riskOrder = { High: 3, Medium: 2, Low: 1 };
+      // Scans waiting for review come right after high risk: they need the doctor's action
+      const riskOrder = { High: 4, Pending: 3, Medium: 2, Low: 1 };
       const riskDelta =
         (riskOrder[getRiskLevel(right.prediction) as keyof typeof riskOrder] ?? 0) -
         (riskOrder[getRiskLevel(left.prediction) as keyof typeof riskOrder] ?? 0);
@@ -124,6 +141,18 @@ const DoctorOverview = () => {
         </div>
       ) : (
         <>
+          {pendingReviews.length > 0 && (
+            <Link
+              to={`/doctor/patients/${pendingReviews[0].patientId}`}
+              className="flex items-center gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 shadow-card hover:bg-amber-100"
+            >
+              <ClipboardCheck className="h-5 w-5" />
+              <span>
+                <strong>{pendingReviews.length} IRM à valider</strong>. Vos patients ne voient leur résultat qu'après votre
+                validation. Ouvrir la plus récente ({pendingReviews[0].patientName}).
+              </span>
+            </Link>
+          )}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard icon={<Users className="h-5 w-5 text-primary" />} label="Total Patients" value={String(patientUsers.length)} delay={0.1} />
             <StatCard icon={<ScanLine className="h-5 w-5 text-primary" />} label="Total Scans" value={String(scans.length)} delay={0.15} />
@@ -155,6 +184,7 @@ const DoctorOverview = () => {
                       d.name === "Non Demented" ? "bg-severity-healthy" :
                       d.name === "Very Mild" ? "bg-severity-mild" :
                       d.name === "Mild" ? "bg-severity-moderate" :
+                      d.name === "En attente" ? "bg-slate-400" :
                       "bg-severity-severe"
                     }`} />
                     {d.name}
@@ -213,7 +243,9 @@ const DoctorOverview = () => {
                       ? "bg-red-100 text-red-700"
                       : riskLevel === "Medium"
                         ? "bg-amber-100 text-amber-700"
-                        : "bg-emerald-100 text-emerald-700";
+                        : riskLevel === "Pending"
+                          ? "bg-slate-100 text-slate-700"
+                          : "bg-emerald-100 text-emerald-700";
 
                   return (
                     <div key={patient._id} className="rounded-xl border border-border bg-muted/30 p-4">
@@ -225,11 +257,13 @@ const DoctorOverview = () => {
                           </p>
                         </div>
                         <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${riskClasses}`}>
-                          {riskLevel}
+                          {RISK_LABEL[riskLevel] ?? riskLevel}
                         </span>
                       </div>
                       <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-                        <p>Prediction: <span className="font-medium text-foreground">{patient.prediction || "Indisponible"}</span></p>
+                        <p>Diagnostic validé : <span className="font-medium text-foreground">{patient.prediction || "Aucun"}</span>
+                          {(patient.pendingReviews ?? 0) > 0 && <span className="ml-1 text-amber-700">· {patient.pendingReviews} IRM à valider</span>}
+                        </p>
                         <p>Symptomes: <span className="font-medium text-foreground">{patient.symptoms?.length ?? 0}</span></p>
                       </div>
                     </div>
