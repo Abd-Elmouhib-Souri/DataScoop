@@ -29,9 +29,14 @@ class FakeModel:
         return np.array([self.probs])
 
 
-def png_bytes(color=(120, 120, 120)):
+def png_bytes(color=(120, 120, 120), size=(176, 208), background=(0, 0, 0)):
+    """Dataset-like slice: gray 'brain' ellipse on a black background (passes the input check)."""
+    from PIL import ImageDraw
+    img = Image.new("RGB", size, background)
+    w, h = size
+    ImageDraw.Draw(img).ellipse([w * 0.15, h * 0.1, w * 0.85, h * 0.9], fill=color)
     buf = io.BytesIO()
-    Image.new("RGB", (50, 60), color).save(buf, format="PNG")
+    img.save(buf, format="PNG")
     return buf.getvalue()
 
 
@@ -135,6 +140,7 @@ def test_missing_metrics_file_loads_nothing(tmp_path, monkeypatch):
 
 def _fake_eval(f1, acc=0.8):
     m = {"accuracy": acc, "macro_f1": f1, "accuracy_ci95": [acc - 0.01, acc + 0.01], "ece": 0.03,
+         "macro_f1_ci95": [f1 - 0.01, f1 + 0.01],
          "recall": {"MildDemented": 0.8, "ModerateDemented": 0.8, "NonDemented": 0.8, "VeryMildDemented": 0.8}}
     return {"full_val": m, "clean": m}
 
@@ -155,6 +161,20 @@ def test_summarize_disables_collapsed_models_and_drops_duplicate():
     assert "ResNet50" in table
 
 
+def test_summarize_does_not_serve_a_model_far_weaker_than_the_best():
+    # Real case of run v2: EfficientNet-B4 passes the 0.5 gate (0.545) but is far below ResNet50 (0.832)
+    results = {
+        "UltraBestModel": {"div255": _fake_eval(0.832), "raw0_255": _fake_eval(0.14)},
+        "AlzheimerCNN": {"div255": _fake_eval(0.809), "raw0_255": _fake_eval(0.59)},
+        "EfficientNetB4": {"div255": _fake_eval(0.115), "raw0_255": _fake_eval(0.545)},
+    }
+    m = summarize(results)[0]["models"]
+    assert m["ResNet50"]["enabled"] and m["CustomCNN"]["enabled"]   # within 0.10 of the best
+    assert not m["EfficientNetB4"]["enabled"]                       # not broken, but too weak
+    assert m["EfficientNetB4"]["disabled_reason"].startswith("too weak")
+    assert m["EfficientNetB4"]["preprocess"] == "raw0_255"           # it rescales internally
+
+
 def test_shipped_metrics_file_is_valid():
     with open(os.path.join(os.path.dirname(ml.__file__), "eval", "model_metrics.json"), encoding="utf-8") as fh:
         models = json.load(fh)["models"]
@@ -162,3 +182,27 @@ def test_shipped_metrics_file_is_valid():
         assert {"enabled", "file", "input_size", "preprocess"} <= set(cfg), name
         if cfg["enabled"]:
             assert cfg["clean_macro_f1"] >= 0.5, name           # never ship a collapsed model
+
+
+# ---------- 5. Basic input check (not OOD detection) ----------
+
+def test_colour_image_is_rejected_422(client):
+    ml.loaded_models["ResNet50"] = FakeModel([0.25] * 4)
+    r = post_image(client, data=png_bytes(color=(200, 40, 40)))          # red "brain" = colour photo
+    assert r.status_code == 422 and "couleur" in r.get_json()["error"]
+
+
+def test_white_background_figure_is_rejected_422(client):
+    ml.loaded_models["ResNet50"] = FakeModel([0.25] * 4)
+    r = post_image(client, data=png_bytes(background=(255, 255, 255)))  # figure on a white page
+    assert r.status_code == 422 and "Fond clair" in r.get_json()["error"]
+
+
+def test_thumbnail_is_rejected_422(client):
+    ml.loaded_models["ResNet50"] = FakeModel([0.25] * 4)
+    assert post_image(client, data=png_bytes(size=(40, 40))).status_code == 422
+
+
+def test_dataset_like_slice_passes_the_check():
+    assert ml.check_input(png_bytes()) is None
+    assert ml.check_input(png_bytes(size=(128, 128))) is None            # smallest dataset format

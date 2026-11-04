@@ -104,6 +104,28 @@ def load_all_models() -> None:
             print(f"  EXCLUDED {name}: {excluded_models[name]}")
 
 
+def check_input(image_bytes: bytes) -> str | None:
+    """
+    BASIC sanity check, NOT real out-of-distribution detection. The training slices are grayscale,
+    skull on a black background, at least ~128 px. Rejects the obvious misuses seen in testing
+    (colour photos/screenshots, figures on a white page, thumbnails). Returns a reason, or None if OK.
+    Thresholds are deliberately loose so that real dataset images always pass.
+    """
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    if min(img.size) < 64:
+        return f"Image trop petite ({img.size[0]}x{img.size[1]} px) : une coupe IRM d'au moins 64 px est attendue."
+    arr = np.asarray(img, dtype=np.float32)
+    chroma = float((arr.max(axis=2) - arr.min(axis=2)).mean())          # 0 for a pure grayscale image
+    if chroma > 25:
+        return "Image en couleur : une coupe IRM en niveaux de gris est attendue (pas une photo ni une capture d'écran)."
+    gray = arr.mean(axis=2)
+    b = max(2, int(0.04 * min(gray.shape)))                              # 4% border strip
+    border = np.concatenate([gray[:b].ravel(), gray[-b:].ravel(), gray[:, :b].ravel(), gray[:, -b:].ravel()])
+    if float(border.mean()) > 100:
+        return "Fond clair détecté : une coupe IRM sur fond noir est attendue (pas une figure ni un document)."
+    return None
+
+
 def preprocess_image(image_bytes: bytes, cfg: dict) -> np.ndarray:
     """RGB + LANCZOS resize (exactly what the Kaggle evaluation measured), then the model's own scaling."""
     size = tuple(cfg["input_size"])
@@ -164,6 +186,11 @@ def predict():
         Image.open(io.BytesIO(image_bytes)).verify()  # cheap integrity check, does not decode pixels
     except (UnidentifiedImageError, OSError, SyntaxError):
         return jsonify({"error": "Format image invalide."}), 400
+
+    # 1b) Obvious non-MRI inputs -> 422 with the reason (the classifier would otherwise answer anyway)
+    reason = check_input(image_bytes)
+    if reason:
+        return jsonify({"error": reason}), 422
 
     # 2) No model available -> 503, never an invented diagnosis
     if not loaded_models:
