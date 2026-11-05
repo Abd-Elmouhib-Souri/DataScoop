@@ -1,6 +1,16 @@
 # DataScoop: Alzheimer MRI decision-support prototype
 
-DataScoop is a full-stack research prototype. A doctor or patient uploads one **2D brain MRI slice**. CNN models classify it into 4 classes (*Non*, *Very Mild*, *Mild*, *Moderate Demented*). The result is stored in a doctor/patient platform with appointments, messaging and reports.
+DataScoop is a full-stack research prototype for Alzheimer's disease screening on **2D brain MRI slices**. A patient sends a slice to **his own doctor**; CNN models suggest one of 4 classes (*Non*, *Very Mild*, *Mild*, *Moderate Demented*); the doctor **validates or corrects** the suggestion, and only then does the patient see a result. The platform also covers appointments, messaging and reports.
+
+**In short**
+
+| | |
+|---|---|
+| Best model | ResNet-50: accuracy **0.814** [95% CI 0.800–0.826], macro-F1 0.832 on 3,153 leak-free **validation** images (0.900 before removing leakage) |
+| Honest limit | these images were also used to pick the training epoch, and there is no patient-level split, so the score is optimistic; no independent test set yet |
+| Weakest point | 1 in 4 "Very Mild" cases missed (recall 0.735) |
+| Design | the AI suggests, the doctor decides; the patient never sees raw AI output |
+| Engineering | JWT + bcrypt, per-doctor access, one-time doctor invitations, 28 backend + 17 Python tests |
 
 > ⚠️ **Research prototype, not a medical device.** The models were trained and evaluated on public 2D Kaggle slices without patient identifiers. Never use them for clinical decisions.
 
@@ -15,7 +25,7 @@ DataScoop is a team **PFA** (end-of-year project) at ESPRIM, Monastir, Tunisia.
 | Part | Who |
 |---|---|
 | Backend (Node/Express/MongoDB), ML service (Flask), integration | **Abd Elmouhib Souri** |
-| Training of the ResNet-50 (Kaggle notebook available) and of the custom CNN and one EfficientNet (notebooks lost) | **Abd Elmouhib Souri** |
+| Training of the ResNet-50 ([notebook](ml_service/training/notebook5252fb6542_resnet50.ipynb)) and of the custom CNN and one EfficientNet (notebooks lost) | **Abd Elmouhib Souri** |
 | Patient / doctor dashboard UI | **Abd Elmouhib Souri** and **Achref** |
 | Frontend scaffold | generated with [Lovable](https://lovable.dev) (React, TypeScript, Vite, Tailwind, shadcn/ui), then extended by the team |
 | Data audit, evaluation, removal of simulated outputs, security hardening (Oct–Nov 2026) | **Abd Elmouhib Souri** |
@@ -36,7 +46,7 @@ flowchart LR
 - **ML service** (`ml_service/app.py`): it loads **only** the models marked `enabled` in `eval/model_metrics.json`.
   - A missing or crashing model is **excluded and reported**.
   - If no model can answer, the API returns **HTTP 503**. It never produces a simulated diagnosis.
-  - The verdict comes from a model **chosen in advance**: the best measured macro-F1. It is not chosen per image by softmax confidence, because softmax confidence is not calibrated.
+  - The verdict comes from a model **chosen in advance**: the best macro-F1 on the leak-free validation subset. It is not chosen per image by softmax confidence, because softmax confidence is not calibrated.
   - A **basic input check** rejects obvious non-MRI images with HTTP 422: colour images, figures on a white background, thumbnails. This is *not* out-of-distribution detection.
 - **Human-in-the-loop workflow** (the AI suggests, the doctor decides):
 
@@ -63,6 +73,14 @@ sequenceDiagram
   - A doctor's ad-hoc analysis (*Advanced Analysis*) is never saved as a patient record.
   - If the ML service fails, the backend answers 503 and **writes nothing** to the patient record.
 - **Frontend** (`neuro-detect-lab-main/`): doctor and patient dashboards, PWA, Capacitor Android build.
+
+### What it looks like
+
+| Patient: scan sent, no AI result shown | Doctor: AI suggestion, validate or correct |
+|---|---|
+| ![Patient waiting for the doctor](docs/screenshots/patient_scan_pending.png) | ![Doctor review card](docs/screenshots/doctor_review_card.png) |
+| **Doctor: warning when the two models disagree** | **Patient: only the doctor's diagnosis** |
+| ![Models disagree](docs/screenshots/doctor_models_disagree.png) | ![Patient history](docs/screenshots/patient_history_doctor_diagnosis.png) |
 
 ---
 
@@ -96,7 +114,19 @@ Recall per class on the leak-free subset (how often each true class is found):
 | CustomCNN | **0.61** | 0.77 | 0.87 | 1.00 |
 | EfficientNetB4 | 0.68 | **0.19** | 0.62 | 0.85 |
 
+ResNet-50, leak-free subset, all metrics recomputed with `sklearn.metrics.classification_report` from the run's confusion matrix (identical to the stored values):
+
+| Class | Precision | Recall | F1 | Support |
+|---|---|---|---|---|
+| Non Demented | 0.826 | 0.756 | 0.790 | 938 |
+| Very Mild | 0.732 | 0.735 | 0.733 | 849 |
+| Mild | 0.809 | 0.861 | 0.834 | 926 |
+| Moderate | 0.952 | 0.989 | 0.970 | 440 |
+| **Accuracy / macro-F1 / weighted-F1** | | | **0.8135 / 0.8317 / 0.8126** | 3,153 |
+
 How to read these tables:
+- **Validation, not test.** The 3,153 images belong to the validation split that training used to keep the best epoch (`ModelCheckpoint(monitor='val_accuracy')` and `EarlyStopping(restore_best_weights=True)`, [training notebook](ml_service/training/notebook5252fb6542_resnet50.ipynb), code cell 14, lines 18–20). Our evaluation also chose the preprocessing and the served models on them (`ml_service/eval/summarize_results.py`). The score is therefore **optimistic**; there is no independent test set yet.
+- **Why macro-F1 (0.832) is above accuracy (0.814).** Macro-F1 gives each class the same weight, and the small *Moderate* class (14% of images) scores 0.97. Without it, macro-F1 is 0.786; the support-weighted F1 (0.813) matches accuracy. Accuracy and per-class recall are the fairer summary.
 - The pipeline is validated: on the original split, the ResNet-50 reproduces its training-notebook value (0.900 vs 0.8997), and run v2 gives the same accuracy and macro-F1 as run v1. **Leakage inflated accuracy by about 8.6 points.**
 - **0.814 is still an upper bound**, not a clinical estimate. The split is not patient-level, a 64×64 correlation cannot catch strong augmentations or other slices of the same patient, and the clean subset comes mostly from one image source.
 - **The errors are where they matter most.** The ResNet-50 misses about 1 in 4 "Very Mild" cases and labels about 1 in 4 healthy slices as demented; the CustomCNN misclassifies 39% of healthy slices. The near-perfect "Moderate" recall is the least trustworthy number: "Moderate" is the smallest class of the original data and was augmented the most, so its 440 clean images likely come from few source slices.
@@ -105,7 +135,7 @@ How to read these tables:
 - EfficientNet-B0 and B3 collapse to one or two classes with both preprocessings (/255 and raw 0–255), so they are disabled. Their low ECE with /255 (0.036–0.059) shows that **good calibration does not imply a useful model**.
 - EfficientNet-B4 works (it rescales internally, so it expects raw 0–255 pixels) but is far weaker than the ResNet-50, with non-overlapping confidence intervals. **The "too weak" rule (gap > 0.10 macro-F1 to the best model) was added after seeing this run** and is reported as such: serving B4 would mostly trigger false "models disagree" warnings for the doctor.
 
-To reproduce: run the Kaggle evaluation notebook (dataset audit, then leak-free subset, then model evaluation), then `python ml_service/eval/summarize_results.py results.json`. This rewrites `model_metrics.json` and the results table. **No accuracy in the code is typed by hand.**
+To reproduce: run the Kaggle evaluation notebook (dataset audit, then leak-free subset, then model evaluation), then `python ml_service/eval/summarize_results.py results.json`. This rewrites `model_metrics.json` and the results table. **No accuracy in the code is typed by hand.** The run stores confusion matrices, not per-image predictions; the next run will also save those.
 
 ---
 
@@ -181,7 +211,7 @@ Generate one code per doctor and keep the note explicit, so you know which code 
 
 ## Next steps
 
-1. Retrain the ResNet-50 on a dataset **with subject IDs** (e.g. OASIS-1) using a **patient-level split**, with augmentation applied only at training time.
+1. An **independent test**: a cohort with subject IDs and CDR labels (OASIS-2 or OASIS-3), subjects with any near-duplicate of a training image removed (same r > 0.98 check), model and preprocessing frozen before looking, results per subject and per slice, published as they come. OASIS-1 is probably **not** external: the training data contains 176×208 slices, likely OASIS-1-derived (to be verified). Then retrain with a **patient-level split** and augmentation applied only at training time.
 2. Grad-CAM on held-out examples.
 3. Temperature scaling, and a reliability diagram for the confidence values. Then a real out-of-distribution score (e.g. feature-space distance to the training set), so that the system can abstain.
 4. Email verification, password reset, and an HttpOnly session cookie.
