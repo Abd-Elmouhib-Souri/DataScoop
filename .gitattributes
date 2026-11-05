@@ -6,3 +6,6 @@
 *.jpeg binary
 *.pdf binary
 *.ico binary
+
+# Keep the training notebook out of the language bar (its embedded plots inflate the byte count)
+*.ipynb linguist-detectable=false
