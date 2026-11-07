@@ -6,13 +6,15 @@ DataScoop is a full-stack research prototype for Alzheimer's disease screening o
 
 | | |
 |---|---|
-| Best model | ResNet-50: accuracy **0.814** [95% CI 0.800–0.826], macro-F1 0.832 on 3,153 leak-free **validation** images (0.900 before removing leakage) |
+| Best model | ResNet-50: accuracy **0.814** [95% CI 0.800–0.826] on 3,153 leak-free **validation** images (0.900 before removing leakage); recall per class: moderate 0.99, mild 0.86, non-demented 0.76, very mild 0.73 |
 | Honest limit | these images were also used to pick the training epoch, and there is no patient-level split, so the score is optimistic; no independent test set yet |
 | Weakest point | 1 in 4 "Very Mild" cases missed (recall 0.735) |
 | Design | the AI suggests, the doctor decides; the patient never sees raw AI output |
 | Engineering | JWT + bcrypt, per-doctor access, one-time doctor invitations, 28 backend + 17 Python tests |
 
 > ⚠️ **Research prototype, not a medical device.** The models were trained and evaluated on public 2D Kaggle slices without patient identifiers. Never use them for clinical decisions.
+
+> **Note.** This repository is the corrected version. The earlier team repository (`achrefchaabene/pifinale`) uses the original split with leakage; its numbers should not be used.
 
 This README separates three things clearly: what is **measured**, what is **implemented**, and what is **not done yet**. Every number below comes from an evaluation run that anyone can reproduce (see [Evaluation](#evaluation)).
 
@@ -31,6 +33,8 @@ DataScoop is a team **PFA** (end-of-year project) at ESPRIM, Monastir, Tunisia.
 | Data audit, evaluation, removal of simulated outputs, security hardening (Oct–Nov 2026) | **Abd Elmouhib Souri** |
 
 The remaining EfficientNet models were trained within the team. Their training code is not available.
+
+Commit `e076d10` (signed "Personne2") is Achref's work.
 
 ## Architecture
 
@@ -124,9 +128,10 @@ ResNet-50, leak-free subset, all metrics recomputed with `sklearn.metrics.classi
 | Moderate | 0.952 | 0.989 | 0.970 | 440 |
 | **Accuracy / macro-F1 / weighted-F1** | | | **0.8135 / 0.8317 / 0.8126** | 3,153 |
 
+Macro-F1 (0.832) is above accuracy because the small, heavily augmented Moderate class scores 0.97; without it, macro-F1 is 0.786.
+
 How to read these tables:
 - **Validation, not test.** The 3,153 images belong to the validation split that training used to keep the best epoch (`ModelCheckpoint(monitor='val_accuracy')` and `EarlyStopping(restore_best_weights=True)`, [training notebook](ml_service/training/notebook5252fb6542_resnet50.ipynb), code cell 14, lines 18–20). Our evaluation also chose the preprocessing and the served models on them (`ml_service/eval/summarize_results.py`). The score is therefore **optimistic**; there is no independent test set yet.
-- **Why macro-F1 (0.832) is above accuracy (0.814).** Macro-F1 gives each class the same weight, and the small *Moderate* class (14% of images) scores 0.97. Without it, macro-F1 is 0.786; the support-weighted F1 (0.813) matches accuracy. Accuracy and per-class recall are the fairer summary.
 - The pipeline is validated: on the original split, the ResNet-50 reproduces its training-notebook value (0.900 vs 0.8997), and run v2 gives the same accuracy and macro-F1 as run v1. **Leakage inflated accuracy by about 8.6 points.**
 - **0.814 is still an upper bound**, not a clinical estimate. The split is not patient-level, a 64×64 correlation cannot catch strong augmentations or other slices of the same patient, and the clean subset comes mostly from one image source.
 - **The errors are where they matter most.** The ResNet-50 misses about 1 in 4 "Very Mild" cases and labels about 1 in 4 healthy slices as demented; the CustomCNN misclassifies 39% of healthy slices. The near-perfect "Moderate" recall is the least trustworthy number: "Moderate" is the smallest class of the original data and was augmented the most, so its 440 clean images likely come from few source slices.
@@ -217,3 +222,7 @@ Generate one code per doctor and keep the note explicit, so you know which code 
 4. Email verification, password reset, and an HttpOnly session cookie.
 5. An **admin** role with a page to create, list and revoke doctor invitations (today this needs a terminal on the server).
 6. Docker Compose, CI running both test suites, and models hosted on the Hugging Face Hub instead of Git LFS.
+
+## License
+
+All rights reserved — academic project (ESPRIM PFA 2026).
